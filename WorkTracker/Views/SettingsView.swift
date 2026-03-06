@@ -6,10 +6,17 @@ struct SettingsView: View {
     @ObservedObject var vm: TrackerViewModel
     let updater: SPUUpdater
 
+    // Persisted values
     @AppStorage("linearAPIKey") private var linearAPIKey = ""
     @AppStorage("syncInterval") private var syncInterval: Double = 300
     @AppStorage("linearResyncLookbackDays") private var linearResyncLookbackDays = 30
     @AppStorage("anthropicAPIKey") private var anthropicAPIKey = ""
+
+    // Editing buffers — only save on explicit "Save"
+    @State private var editLinearKey = ""
+    @State private var editAnthropicKey = ""
+    @State private var linearKeyDirty = false
+    @State private var anthropicKeyDirty = false
 
     @State private var testResult: String?
     @State private var syncResult: String?
@@ -18,64 +25,135 @@ struct SettingsView: View {
     @State private var showResetConfirm = false
     @State private var showImportConfirm = false
     @State private var pendingImportData: Data?
+    @State private var saveFlashLinear = false
+    @State private var saveFlashAI = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingLG) {
                 header
-                aiCard
-                linearCard
+                integrationsCard
+                syncCard
                 storageCard
                 aboutCard
             }
             .padding(20)
         }
-        .frame(width: 560, height: 620)
+        .frame(width: 560, height: 660)
         .background(DesignSystem.Gradients.shell)
+        .onAppear {
+            editLinearKey = linearAPIKey
+            editAnthropicKey = anthropicAPIKey
+        }
     }
+
+    // MARK: - Header
 
     private var header: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
             Text("Settings")
                 .font(DesignSystem.Typography.display)
                 .foregroundStyle(DesignSystem.Colors.textPrimary)
-            Text("Configure AI, Linear sync cadence, and local storage without leaving the dashboard flow.")
+            Text("API keys, sync preferences, and data management.")
                 .font(DesignSystem.Typography.caption)
                 .foregroundStyle(DesignSystem.Colors.textSecondary)
         }
     }
 
-    private var aiCard: some View {
+    // MARK: - Integrations (API Keys)
+
+    private var integrationsCard: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingLG) {
                 SectionHeader(
-                    title: "AI Summary",
-                    subtitle: "Anthropic credentials for daily summaries."
+                    title: "Integrations",
+                    subtitle: "Connect your accounts to enable sync and AI features."
                 )
 
-                SecureField("API Key or OAuth token", text: $anthropicAPIKey)
-                    .textFieldStyle(.roundedBorder)
+                // Linear API Key
+                VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
+                    HStack {
+                        Label("Linear", systemImage: "link")
+                            .font(DesignSystem.Typography.captionBold)
+                            .foregroundStyle(DesignSystem.Colors.textPrimary)
+                        Spacer()
+                        connectionBadge(isConnected: !linearAPIKey.isEmpty)
+                    }
 
-                Text("Supports `sk-ant-api` and `sk-ant-oat` tokens. Leave empty to auto-read from `.env`.")
-                    .font(DesignSystem.Typography.caption)
-                    .foregroundStyle(DesignSystem.Colors.textSecondary)
+                    HStack(spacing: DesignSystem.Layout.spacingSM) {
+                        SecureField("lin_api_...", text: $editLinearKey)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: editLinearKey) { _ in
+                                linearKeyDirty = editLinearKey != linearAPIKey
+                            }
+
+                        saveButton(
+                            dirty: linearKeyDirty,
+                            flashing: saveFlashLinear
+                        ) {
+                            linearAPIKey = editLinearKey
+                            linearKeyDirty = false
+                            saveFlashLinear = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { saveFlashLinear = false }
+                        }
+                    }
+
+                    Text("Get your key from Linear Settings > API > Personal API keys.")
+                        .font(DesignSystem.Typography.micro)
+                        .foregroundStyle(DesignSystem.Colors.textSecondary)
+                }
+
+                Divider().overlay(DesignSystem.Colors.border)
+
+                // Anthropic API Key
+                VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
+                    HStack {
+                        Label("Anthropic (AI Summary)", systemImage: "sparkles")
+                            .font(DesignSystem.Typography.captionBold)
+                            .foregroundStyle(DesignSystem.Colors.textPrimary)
+                        Spacer()
+                        connectionBadge(isConnected: !anthropicAPIKey.isEmpty)
+                    }
+
+                    HStack(spacing: DesignSystem.Layout.spacingSM) {
+                        SecureField("sk-ant-api-...", text: $editAnthropicKey)
+                            .textFieldStyle(.roundedBorder)
+                            .onChange(of: editAnthropicKey) { _ in
+                                anthropicKeyDirty = editAnthropicKey != anthropicAPIKey
+                            }
+
+                        saveButton(
+                            dirty: anthropicKeyDirty,
+                            flashing: saveFlashAI
+                        ) {
+                            anthropicAPIKey = editAnthropicKey
+                            anthropicKeyDirty = false
+                            saveFlashAI = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { saveFlashAI = false }
+                        }
+                    }
+
+                    Text("Supports sk-ant-api and sk-ant-oat tokens. Leave empty to read from .env file.")
+                        .font(DesignSystem.Typography.micro)
+                        .foregroundStyle(DesignSystem.Colors.textSecondary)
+                }
             }
         }
     }
 
-    private var linearCard: some View {
+    // MARK: - Sync Settings
+
+    private var syncCard: some View {
         SectionCard {
             VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
                 SectionHeader(
-                    title: "Linear",
-                    subtitle: "Background sync cadence and manual recovery imports."
+                    title: "Linear Sync",
+                    subtitle: "Automatic background sync and manual recovery."
                 )
 
-                SecureField("Linear API Key", text: $linearAPIKey)
-                    .textFieldStyle(.roundedBorder)
-
+                // Sync interval
                 VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
-                    Text("Sync interval")
+                    Text("Auto-sync interval")
                         .font(DesignSystem.Typography.captionBold)
                         .foregroundStyle(DesignSystem.Colors.textSecondary)
                     Picker("", selection: $syncInterval) {
@@ -90,26 +168,30 @@ struct SettingsView: View {
                     }
                 }
 
+                Divider().overlay(DesignSystem.Colors.border)
+
+                // Manual resync
                 HStack(alignment: .center, spacing: DesignSystem.Layout.spacingMD) {
-                    VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
-                        Text("Manual resync range")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Manual resync")
                             .font(DesignSystem.Typography.captionBold)
                             .foregroundStyle(DesignSystem.Colors.textSecondary)
-                        Text("Use this when you want to backfill missing completed tasks.")
-                            .font(DesignSystem.Typography.caption)
+                        Text("Backfill missing completed tasks from Linear.")
+                            .font(DesignSystem.Typography.micro)
                             .foregroundStyle(DesignSystem.Colors.textSecondary)
                     }
 
                     Spacer()
 
                     Stepper(value: $linearResyncLookbackDays, in: 1...365) {
-                        Text("\(linearResyncLookbackDays) days")
+                        Text("\(linearResyncLookbackDays)d")
                             .font(DesignSystem.Typography.monoCaption)
                             .monospacedDigit()
                     }
-                    .frame(width: 170, alignment: .trailing)
+                    .frame(width: 120, alignment: .trailing)
                 }
 
+                // Action buttons
                 HStack(spacing: DesignSystem.Layout.spacingSM) {
                     PrimaryActionButton(
                         title: "Test Connection",
@@ -122,7 +204,7 @@ struct SettingsView: View {
                     .disabled(linearAPIKey.isEmpty || isTesting)
 
                     PrimaryActionButton(
-                        title: "Run Manual Resync",
+                        title: "Resync \(linearResyncLookbackDays)d",
                         icon: "arrow.triangle.2.circlepath",
                         color: DesignSystem.Colors.brand,
                         isLoading: isResyncing
@@ -132,6 +214,7 @@ struct SettingsView: View {
                     .disabled(linearAPIKey.isEmpty || isResyncing)
                 }
 
+                // Status results
                 if let result = testResult {
                     statusRow(
                         text: result,
@@ -149,17 +232,19 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: - Storage
+
     private var storageCard: some View {
         SectionCard {
             VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
                 SectionHeader(
-                    title: "Storage",
-                    subtitle: "Export, import, or reset your tracking data."
+                    title: "Data",
+                    subtitle: "Export a backup, import from file, or start fresh."
                 )
 
                 HStack(spacing: DesignSystem.Layout.spacingSM) {
                     PrimaryActionButton(
-                        title: "Export Data",
+                        title: "Export",
                         icon: "square.and.arrow.up",
                         color: DesignSystem.Colors.brand,
                         isLoading: false
@@ -168,7 +253,7 @@ struct SettingsView: View {
                     }
 
                     PrimaryActionButton(
-                        title: "Import Data",
+                        title: "Import",
                         icon: "square.and.arrow.down",
                         color: DesignSystem.Colors.info,
                         isLoading: false
@@ -177,7 +262,7 @@ struct SettingsView: View {
                     }
 
                     PrimaryActionButton(
-                        title: "Reset All Data",
+                        title: "Reset",
                         icon: "trash",
                         color: DesignSystem.Colors.danger,
                         isLoading: false
@@ -186,8 +271,8 @@ struct SettingsView: View {
                     }
                 }
 
-                Text("Data is stored locally and backed up automatically by Time Machine.")
-                    .font(DesignSystem.Typography.caption)
+                Text("Stored in ~/Library/Application Support/WorkTracker. Backed up by Time Machine.")
+                    .font(DesignSystem.Typography.micro)
                     .foregroundStyle(DesignSystem.Colors.textSecondary)
             }
         }
@@ -214,6 +299,100 @@ struct SettingsView: View {
             Text("This will replace all existing data with the imported file. Current data will be lost.")
         }
     }
+
+    // MARK: - About
+
+    private var appVersion: String {
+        let marketing = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "\(marketing) (\(build))"
+    }
+
+    private var aboutCard: some View {
+        SectionCard {
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+                SectionHeader(
+                    title: "About",
+                    subtitle: "WorkTracker v\(appVersion)"
+                )
+
+                HStack(spacing: DesignSystem.Layout.spacingSM) {
+                    PrimaryActionButton(
+                        title: "Check for Updates",
+                        icon: "arrow.clockwise",
+                        color: DesignSystem.Colors.brand,
+                        isLoading: false
+                    ) {
+                        updater.checkForUpdates()
+                    }
+
+                    Spacer()
+
+                    Toggle("Auto-update", isOn: Binding(
+                        get: { updater.automaticallyChecksForUpdates },
+                        set: { updater.automaticallyChecksForUpdates = $0 }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .font(DesignSystem.Typography.caption)
+                }
+            }
+        }
+    }
+
+    // MARK: - Components
+
+    private func connectionBadge(isConnected: Bool) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(isConnected ? DesignSystem.Colors.success : DesignSystem.Colors.textSecondary.opacity(0.3))
+                .frame(width: 6, height: 6)
+            Text(isConnected ? "Connected" : "Not set")
+                .font(DesignSystem.Typography.micro)
+                .foregroundStyle(isConnected ? DesignSystem.Colors.success : DesignSystem.Colors.textSecondary)
+        }
+    }
+
+    private func saveButton(dirty: Bool, flashing: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: flashing ? "checkmark" : "square.and.arrow.down.on.square")
+                    .font(.system(size: 10, weight: .semibold))
+                Text(flashing ? "Saved" : "Save")
+                    .font(DesignSystem.Typography.captionBold)
+            }
+            .foregroundStyle(flashing ? DesignSystem.Colors.success : dirty ? .white : DesignSystem.Colors.textSecondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(flashing ? DesignSystem.Colors.success.opacity(0.15) : dirty ? DesignSystem.Colors.brand : DesignSystem.Colors.surfaceHighlight)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!dirty && !flashing)
+        .animation(.easeOut(duration: 0.2), value: dirty)
+        .animation(.easeOut(duration: 0.2), value: flashing)
+    }
+
+    private func statusRow(text: String, color: Color) -> some View {
+        HStack(spacing: DesignSystem.Layout.spacingXS) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(text)
+                .font(DesignSystem.Typography.caption)
+                .foregroundStyle(DesignSystem.Colors.textPrimary)
+        }
+        .padding(.horizontal, DesignSystem.Layout.spacingMD)
+        .padding(.vertical, DesignSystem.Layout.spacingSM)
+        .background(
+            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
+                .fill(color.opacity(0.08))
+        )
+    }
+
+    // MARK: - Data Actions
 
     private func exportFullData() {
         guard let data = DatabaseManager.shared.exportAll() else { return }
@@ -242,75 +421,7 @@ struct SettingsView: View {
         }
     }
 
-    private var appVersion: String {
-        let marketing = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
-        return "\(marketing) (\(build))"
-    }
-
-    private var aboutCard: some View {
-        SectionCard {
-            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
-                SectionHeader(
-                    title: "About",
-                    subtitle: "Current build capabilities."
-                )
-
-                infoRow(label: "Version", value: appVersion)
-                infoRow(label: "Data", value: "Local SQLite (Application Support)")
-                infoRow(label: "Updates", value: "Automatic via Sparkle")
-
-                HStack(spacing: DesignSystem.Layout.spacingSM) {
-                    PrimaryActionButton(
-                        title: "Check for Updates",
-                        icon: "arrow.clockwise",
-                        color: DesignSystem.Colors.brand,
-                        isLoading: false
-                    ) {
-                        updater.checkForUpdates()
-                    }
-
-                    Toggle("Auto-check", isOn: Binding(
-                        get: { updater.automaticallyChecksForUpdates },
-                        set: { updater.automaticallyChecksForUpdates = $0 }
-                    ))
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .font(DesignSystem.Typography.caption)
-                }
-            }
-        }
-    }
-
-    private func infoRow(label: String, value: String) -> some View {
-        HStack {
-            Text(label.uppercased())
-                .font(DesignSystem.Typography.microBold)
-                .tracking(0.8)
-                .foregroundStyle(DesignSystem.Colors.textSecondary)
-            Spacer()
-            Text(value)
-                .font(DesignSystem.Typography.captionBold)
-                .foregroundStyle(DesignSystem.Colors.textPrimary)
-        }
-    }
-
-    private func statusRow(text: String, color: Color) -> some View {
-        HStack(spacing: DesignSystem.Layout.spacingXS) {
-            Circle()
-                .fill(color)
-                .frame(width: 7, height: 7)
-            Text(text)
-                .font(DesignSystem.Typography.caption)
-                .foregroundStyle(DesignSystem.Colors.textPrimary)
-        }
-        .padding(.horizontal, DesignSystem.Layout.spacingMD)
-        .padding(.vertical, DesignSystem.Layout.spacingSM)
-        .background(
-            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
-                .fill(color.opacity(0.08))
-        )
-    }
+    // MARK: - Linear Actions
 
     private func testConnection() {
         isTesting = true
