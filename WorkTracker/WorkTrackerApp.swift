@@ -20,17 +20,19 @@ struct WorkTrackerApp: App {
             .onChange(of: vm.isMiniMode) { mini in
                 if let window = NSApplication.shared.windows.first(where: { $0.isKeyWindow }) {
                     if mini {
-                        window.setContentSize(NSSize(width: 250, height: 110))
+                        window.minSize = NSSize(width: 304, height: 176)
+                        window.setContentSize(NSSize(width: 304, height: 176))
                         window.styleMask.remove(.resizable)
                     } else {
                         window.styleMask.insert(.resizable)
-                        window.setContentSize(NSSize(width: 540, height: 640))
+                        window.minSize = NSSize(width: 560, height: 620)
+                        window.setContentSize(NSSize(width: 560, height: 640))
                     }
                 }
             }
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 540, height: 640)
+        .defaultSize(width: 560, height: 640)
 
         // Menu bar extra — shares the same ViewModel
         MenuBarExtra {
@@ -64,6 +66,11 @@ struct WorkTrackerApp: App {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             if let window = NSApplication.shared.windows.first(where: { $0.isKeyWindow }) {
                 window.level = floating ? .floating : .normal
+                if floating {
+                    window.minSize = NSSize(width: 304, height: 176)
+                } else {
+                    window.minSize = NSSize(width: 560, height: 620)
+                }
             }
         }
     }

@@ -54,7 +54,7 @@ struct ContentView: View {
                 .padding(.bottom, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 520, idealWidth: 580, minHeight: 600, idealHeight: 700)
+        .frame(minWidth: 560, idealWidth: 580, minHeight: 600, idealHeight: 700)
         .background(DesignSystem.Gradients.shell)
         .overlay(alignment: .top) { toastOverlay }
         .sheet(isPresented: $vm.isEditingHours) { editHoursSheet }
@@ -281,7 +281,7 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
                 .fill(Theme.surface2.opacity(0.7))
         )
-        .frame(minWidth: 186)
+        .frame(minWidth: 168)
     }
 
     private static let timeFormatter: DateFormatter = {
@@ -437,48 +437,7 @@ struct ContentView: View {
 
     private var notesTab: some View {
         VStack(spacing: 0) {
-            HStack(spacing: DesignSystem.Layout.spacingSM) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Notes")
-                        .font(DesignSystem.Typography.heading)
-                        .foregroundStyle(Theme.text)
-
-                    Text(vm.isViewingToday ? "\(vm.selectedNotes.count) notes captured today" : "\(vm.selectedNotes.count) notes for \(vm.selectedDate.formatted(date: .abbreviated, time: .omitted))")
-                        .font(DesignSystem.Typography.caption)
-                        .foregroundStyle(Theme.dim)
-                }
-
-                Spacer()
-
-                toolbarButton(
-                    title: vm.selectedSummary != nil ? "Redo AI" : "AI Summary",
-                    icon: vm.isGeneratingSummary ? nil : "sparkles",
-                    color: Theme.accent,
-                    showsProgress: vm.isGeneratingSummary,
-                    disabled: vm.isGeneratingSummary || vm.selectedNotes.isEmpty
-                ) {
-                    Task { await vm.generateSummary() }
-                }
-
-                Menu {
-                    Button("Enter Mini Mode") {
-                        withAnimation { vm.isMiniMode = true }
-                    }
-
-                    Button("Linear Sync") {
-                        Task { await vm.linearSync() }
-                    }
-                    .disabled(vm.isSyncing)
-
-                    Button("Resync \(linearResyncLookbackDays)d") {
-                        Task { await vm.linearSync(lookbackDays: linearResyncLookbackDays) }
-                    }
-                    .disabled(vm.isSyncing)
-                } label: {
-                    toolbarMenuLabel(title: "Actions", icon: "ellipsis.circle", color: Theme.dim)
-                }
-                .menuStyle(.borderlessButton)
-            }
+            notesHeader
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
 
@@ -1047,23 +1006,44 @@ struct ContentView: View {
     }
 
     private var heroSummaryStrip: some View {
-        HStack(spacing: DesignSystem.Layout.spacingSM) {
-            heroSummaryItem(title: "Work", value: formatDur(contextTotals[.work] ?? 0), color: ActivityType.work.accentColor)
-            heroSummaryItem(title: "Lunch", value: formatDur(contextTotals[.lunch] ?? 0), color: ActivityType.lunch.accentColor)
-            heroSummaryItem(title: "Break", value: formatDur(contextTotals[.break] ?? 0), color: ActivityType.break.accentColor)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: DesignSystem.Layout.spacingSM) {
+                heroSummaryItem(title: "Work", value: formatDur(contextTotals[.work] ?? 0), color: ActivityType.work.accentColor)
+                heroSummaryItem(title: "Lunch", value: formatDur(contextTotals[.lunch] ?? 0), color: ActivityType.lunch.accentColor)
+                heroSummaryItem(title: "Break", value: formatDur(contextTotals[.break] ?? 0), color: ActivityType.break.accentColor)
+                heroContextItem
+            }
 
-            Spacer(minLength: DesignSystem.Layout.spacingMD)
-
-            VStack(alignment: .trailing, spacing: 2) {
-                Text("\(contextNotesCount) note\(contextNotesCount == 1 ? "" : "s")")
-                    .font(DesignSystem.Typography.captionBold)
-                    .foregroundStyle(Theme.text)
-
-                Text(vm.isViewingToday ? "Live context" : vm.selectedDate.formatted(date: .abbreviated, time: .omitted))
-                    .font(DesignSystem.Typography.micro)
-                    .foregroundStyle(Theme.dim)
+            VStack(spacing: DesignSystem.Layout.spacingSM) {
+                HStack(spacing: DesignSystem.Layout.spacingSM) {
+                    heroSummaryItem(title: "Work", value: formatDur(contextTotals[.work] ?? 0), color: ActivityType.work.accentColor)
+                    heroSummaryItem(title: "Lunch", value: formatDur(contextTotals[.lunch] ?? 0), color: ActivityType.lunch.accentColor)
+                }
+                HStack(spacing: DesignSystem.Layout.spacingSM) {
+                    heroSummaryItem(title: "Break", value: formatDur(contextTotals[.break] ?? 0), color: ActivityType.break.accentColor)
+                    heroContextItem
+                }
             }
         }
+    }
+
+    private var heroContextItem: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(contextNotesCount) note\(contextNotesCount == 1 ? "" : "s")")
+                .font(DesignSystem.Typography.captionBold)
+                .foregroundStyle(Theme.text)
+
+            Text(vm.isViewingToday ? "Live context" : vm.selectedDate.formatted(date: .abbreviated, time: .omitted))
+                .font(DesignSystem.Typography.micro)
+                .foregroundStyle(Theme.dim)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, DesignSystem.Layout.spacingMD)
+        .padding(.vertical, DesignSystem.Layout.spacingSM)
+        .background(
+            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
+                .fill(Theme.surface2.opacity(0.55))
+        )
     }
 
     private func heroSummaryItem(title: String, value: String, color: Color) -> some View {
@@ -1083,6 +1063,66 @@ struct ContentView: View {
             RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
                 .fill(color.opacity(0.06))
         )
+    }
+
+    private var notesHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: DesignSystem.Layout.spacingSM) {
+                notesHeaderText
+                Spacer()
+                notesHeaderActions
+            }
+
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
+                notesHeaderText
+                notesHeaderActions
+            }
+        }
+    }
+
+    private var notesHeaderText: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("Notes")
+                .font(DesignSystem.Typography.heading)
+                .foregroundStyle(Theme.text)
+
+            Text(vm.isViewingToday ? "\(vm.selectedNotes.count) notes captured today" : "\(vm.selectedNotes.count) notes for \(vm.selectedDate.formatted(date: .abbreviated, time: .omitted))")
+                .font(DesignSystem.Typography.caption)
+                .foregroundStyle(Theme.dim)
+        }
+    }
+
+    private var notesHeaderActions: some View {
+        HStack(spacing: DesignSystem.Layout.spacingSM) {
+            toolbarButton(
+                title: vm.selectedSummary != nil ? "Redo AI" : "AI Summary",
+                icon: vm.isGeneratingSummary ? nil : "sparkles",
+                color: Theme.accent,
+                showsProgress: vm.isGeneratingSummary,
+                disabled: vm.isGeneratingSummary || vm.selectedNotes.isEmpty
+            ) {
+                Task { await vm.generateSummary() }
+            }
+
+            Menu {
+                Button("Enter Mini Mode") {
+                    withAnimation { vm.isMiniMode = true }
+                }
+
+                Button("Linear Sync") {
+                    Task { await vm.linearSync() }
+                }
+                .disabled(vm.isSyncing)
+
+                Button("Resync \(linearResyncLookbackDays)d") {
+                    Task { await vm.linearSync(lookbackDays: linearResyncLookbackDays) }
+                }
+                .disabled(vm.isSyncing)
+            } label: {
+                toolbarMenuLabel(title: "Actions", icon: "ellipsis.circle", color: Theme.dim)
+            }
+            .menuStyle(.borderlessButton)
+        }
     }
 
     private func toolbarButton(title: String, icon: String?, color: Color, showsProgress: Bool = false, disabled: Bool = false, action: @escaping () -> Void) -> some View {
