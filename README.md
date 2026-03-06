@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/icon-concept.png" width="128" height="128" alt="SillyTrack icon" />
+  <img src="icon.png" width="128" height="128" alt="SillyTrack icon" />
 </p>
 
 <h1 align="center">SillyTrack</h1>
