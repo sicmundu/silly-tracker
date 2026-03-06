@@ -1,8 +1,10 @@
 import SwiftUI
+import Sparkle
 
 @main
 struct WorkTrackerApp: App {
     @StateObject private var vm = TrackerViewModel()
+    private let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
     var body: some Scene {
         // Main window — shares the same ViewModel
@@ -44,7 +46,7 @@ struct WorkTrackerApp: App {
 
         // Settings
         Settings {
-            SettingsView(vm: vm)
+            SettingsView(vm: vm, updater: updaterController.updater)
         }
     }
 

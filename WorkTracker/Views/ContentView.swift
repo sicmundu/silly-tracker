@@ -42,6 +42,8 @@ struct ContentView: View {
     @State private var exportPeriod = "week"
     @State private var hoveredButton: String?
     @State private var selectedTab: Tab = .notes
+    @State private var showGuide = false
+    @State private var guideStep = 0
 
     var body: some View {
         VStack(spacing: DesignSystem.Layout.spacingMD) {
@@ -57,6 +59,7 @@ struct ContentView: View {
         .frame(minWidth: 560, idealWidth: 580, minHeight: 600, idealHeight: 700)
         .background(DesignSystem.Gradients.shell)
         .overlay(alignment: .top) { toastOverlay }
+        .overlay { guideOverlay }
         .sheet(isPresented: $vm.isEditingHours) { editHoursSheet }
     }
 
@@ -126,13 +129,33 @@ struct ContentView: View {
                 heroMetaText
                 Spacer(minLength: DesignSystem.Layout.spacingMD)
                 heroGoalBadge
+                guideButton
             }
 
             VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
-                heroMetaText
+                HStack {
+                    heroMetaText
+                    Spacer()
+                    guideButton
+                }
                 heroGoalBadge
             }
         }
+    }
+
+    private var guideButton: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.3)) {
+                guideStep = 0
+                showGuide = true
+            }
+        } label: {
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.dim)
+        }
+        .buttonStyle(.plain)
+        .help("Show guide")
     }
 
     private var heroMetaText: some View {
@@ -978,6 +1001,155 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Guide Overlay
+
+    private struct GuideTip: Identifiable {
+        let id: Int
+        let icon: String
+        let title: String
+        let body: String
+        let alignment: Alignment
+        let offsetY: CGFloat
+    }
+
+    private var guideTips: [GuideTip] {
+        [
+            GuideTip(id: 0, icon: "timer", title: "Live Timer",
+                     body: "Shows your current activity and elapsed time. Hit the big button to start or stop tracking.",
+                     alignment: .top, offsetY: 80),
+            GuideTip(id: 1, icon: "bolt.fill", title: "Activity Controls",
+                     body: "Switch between Work, Lunch, and Break. Starting a new activity auto-stops the previous one.",
+                     alignment: .top, offsetY: 180),
+            GuideTip(id: 2, icon: "note.text", title: "Notes & AI",
+                     body: "Capture what you're working on. The AI summary button distills your notes into a daily recap.",
+                     alignment: .center, offsetY: 20),
+            GuideTip(id: 3, icon: "chart.bar", title: "Stats & History",
+                     body: "Use the tabs below to see your log, weekly analytics, or export data. Navigate days with the arrows.",
+                     alignment: .center, offsetY: 80),
+            GuideTip(id: 4, icon: "gearshape", title: "Settings",
+                     body: "Open Settings (Cmd+,) to configure Linear sync, AI keys, and export or reset your data.",
+                     alignment: .bottom, offsetY: -60),
+        ]
+    }
+
+    @ViewBuilder
+    private var guideOverlay: some View {
+        if showGuide {
+            ZStack {
+                // Dimmed backdrop
+                Color.black.opacity(0.55)
+                    .ignoresSafeArea()
+                    .onTapGesture { advanceOrCloseGuide() }
+
+                VStack(spacing: 0) {
+                    Spacer()
+                        .frame(maxHeight: guideTips[guideStep].offsetY)
+
+                    // Tip card
+                    VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
+                        HStack(spacing: DesignSystem.Layout.spacingSM) {
+                            Image(systemName: guideTips[guideStep].icon)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 32, height: 32)
+                                .background(Theme.accent.opacity(0.12))
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(guideTips[guideStep].title)
+                                    .font(DesignSystem.Typography.heading)
+                                    .foregroundStyle(.white)
+                                Text("\(guideStep + 1) of \(guideTips.count)")
+                                    .font(DesignSystem.Typography.micro)
+                                    .foregroundStyle(.white.opacity(0.5))
+                            }
+
+                            Spacer()
+
+                            Button {
+                                withAnimation(.easeOut(duration: 0.25)) { showGuide = false }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 11, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.5))
+                                    .frame(width: 24, height: 24)
+                                    .background(.white.opacity(0.1))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        Text(guideTips[guideStep].body)
+                            .font(DesignSystem.Typography.body)
+                            .foregroundStyle(.white.opacity(0.85))
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        // Navigation dots + Next button
+                        HStack {
+                            HStack(spacing: 6) {
+                                ForEach(0..<guideTips.count, id: \.self) { i in
+                                    Circle()
+                                        .fill(i == guideStep ? Theme.accent : .white.opacity(0.25))
+                                        .frame(width: 6, height: 6)
+                                }
+                            }
+
+                            Spacer()
+
+                            Button {
+                                advanceOrCloseGuide()
+                            } label: {
+                                Text(guideStep == guideTips.count - 1 ? "Got it" : "Next")
+                                    .font(DesignSystem.Typography.captionBold)
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 6)
+                                    .background(Theme.accent)
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.top, DesignSystem.Layout.spacingXS)
+                    }
+                    .padding(DesignSystem.Layout.spacingLG)
+                    .background(
+                        RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
+                            .fill(.ultraThinMaterial.opacity(0.85))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
+                                    .fill(Color.black.opacity(0.45))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
+                                    .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 40)
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                        removal: .opacity.combined(with: .scale(scale: 0.95))
+                    ))
+                    .id(guideStep)
+
+                    Spacer()
+                }
+            }
+            .transition(.opacity)
+        }
+    }
+
+    private func advanceOrCloseGuide() {
+        if guideStep < guideTips.count - 1 {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                guideStep += 1
+            }
+        } else {
+            withAnimation(.easeOut(duration: 0.25)) {
+                showGuide = false
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func shiftSelectedDay(by offset: Int) {
@@ -1093,7 +1265,7 @@ struct ContentView: View {
     }
 
     private var notesHeaderActions: some View {
-        HStack(spacing: DesignSystem.Layout.spacingSM) {
+        HStack(spacing: DesignSystem.Layout.spacingXS) {
             toolbarButton(
                 title: vm.selectedSummary != nil ? "Redo AI" : "AI Summary",
                 icon: vm.isGeneratingSummary ? nil : "sparkles",
@@ -1104,24 +1276,19 @@ struct ContentView: View {
                 Task { await vm.generateSummary() }
             }
 
-            Menu {
-                Button("Enter Mini Mode") {
-                    withAnimation { vm.isMiniMode = true }
-                }
-
-                Button("Linear Sync") {
-                    Task { await vm.linearSync() }
-                }
-                .disabled(vm.isSyncing)
-
-                Button("Resync \(linearResyncLookbackDays)d") {
-                    Task { await vm.linearSync(lookbackDays: linearResyncLookbackDays) }
-                }
-                .disabled(vm.isSyncing)
-            } label: {
-                toolbarMenuLabel(title: "Actions", icon: "ellipsis.circle", color: Theme.dim)
+            toolbarButton(
+                title: "Sync",
+                icon: vm.isSyncing ? nil : "arrow.triangle.2.circlepath",
+                color: Theme.dim,
+                showsProgress: vm.isSyncing,
+                disabled: vm.isSyncing
+            ) {
+                Task { await vm.linearSync() }
             }
-            .menuStyle(.borderlessButton)
+
+            toolbarIconButton(icon: "rectangle.compress.vertical", color: Theme.dim) {
+                withAnimation { vm.isMiniMode = true }
+            }
         }
     }
 
@@ -1151,18 +1318,17 @@ struct ContentView: View {
         .opacity(disabled ? 0.45 : 1)
     }
 
-    private func toolbarMenuLabel(title: String, icon: String, color: Color) -> some View {
-        HStack(spacing: DesignSystem.Layout.spacingXS) {
+    private func toolbarIconButton(icon: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             Image(systemName: icon)
                 .font(DesignSystem.Typography.captionBold)
-            Text(title)
-                .font(DesignSystem.Typography.captionBold)
+                .foregroundStyle(color)
+                .padding(.horizontal, DesignSystem.Layout.spacingSM)
+                .padding(.vertical, DesignSystem.Layout.spacingXS)
+                .background(color.opacity(0.10))
+                .clipShape(Capsule())
         }
-        .foregroundStyle(color)
-        .padding(.horizontal, DesignSystem.Layout.spacingSM)
-        .padding(.vertical, DesignSystem.Layout.spacingXS)
-        .background(Theme.surface2)
-        .clipShape(Capsule())
+        .buttonStyle(.plain)
     }
 
     private func quickNoteChip(_ title: String) -> some View {

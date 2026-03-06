@@ -18,17 +18,54 @@ final class DatabaseManager {
     private let queue = DispatchQueue(label: "db.serial", qos: .userInitiated)
     private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-    var dbPath: String {
-        let custom = UserDefaults.standard.string(forKey: "dbPath") ?? ""
-        if !custom.isEmpty { return custom }
-
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    private static let defaultDir: URL = {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("WorkTracker")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("tracker.db").path
+        return dir
+    }()
+
+    static var defaultDbPath: String {
+        defaultDir.appendingPathComponent("tracker.db").path
+    }
+
+    var dbPath: String {
+        Self.defaultDbPath
+    }
+
+    /// Migrate DB from old ~/Documents/WorkTracker location to Application Support.
+    /// Called once on first launch after the update.
+    private func migrateFromDocumentsIfNeeded() {
+        let fm = FileManager.default
+        let oldDir = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("WorkTracker")
+        let oldDb = oldDir.appendingPathComponent("tracker.db")
+        let newDb = URL(fileURLWithPath: Self.defaultDbPath)
+
+        // Only migrate if old DB exists and new one does not
+        guard fm.fileExists(atPath: oldDb.path),
+              !fm.fileExists(atPath: newDb.path) else { return }
+
+        do {
+            try fm.copyItem(at: oldDb, to: newDb)
+            // Also move WAL/SHM if present
+            for ext in ["-wal", "-shm"] {
+                let oldFile = oldDir.appendingPathComponent("tracker.db\(ext)")
+                let newFile = Self.defaultDir.appendingPathComponent("tracker.db\(ext)")
+                if fm.fileExists(atPath: oldFile.path) {
+                    try? fm.copyItem(at: oldFile, to: newFile)
+                }
+            }
+            print("Migrated DB from \(oldDb.path) to \(newDb.path)")
+        } catch {
+            print("DB migration failed: \(error)")
+        }
     }
 
     private init() {
+        migrateFromDocumentsIfNeeded()
+        // Clear legacy custom dbPath from UserDefaults
+        UserDefaults.standard.removeObject(forKey: "dbPath")
         open()
         createTables()
     }
@@ -735,5 +772,174 @@ final class DatabaseManager {
 
     private func toDateFloor(to value: String) -> String {
         value
+    }
+
+    // MARK: - Full Export / Import / Reset
+
+    struct FullExport: Codable {
+        var entries: [[String: String]]
+        var notes: [[String: String]]
+        var summaries: [[String: String]]
+        var linearSynced: [[String: String]]
+    }
+
+    func exportAll() -> Data? {
+        queue.sync {
+            var export = FullExport(entries: [], notes: [], summaries: [], linearSynced: [])
+
+            // entries
+            if let stmt = prepareStatement("SELECT id, date, type, start_time, end_time FROM entries ORDER BY start_time") {
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    var row: [String: String] = [:]
+                    row["id"] = "\(sqlite3_column_int64(stmt, 0))"
+                    row["date"] = String(cString: sqlite3_column_text(stmt, 1))
+                    row["type"] = String(cString: sqlite3_column_text(stmt, 2))
+                    row["start_time"] = String(cString: sqlite3_column_text(stmt, 3))
+                    if let end = sqlite3_column_text(stmt, 4) { row["end_time"] = String(cString: end) }
+                    export.entries.append(row)
+                }
+                sqlite3_finalize(stmt)
+            }
+
+            // notes
+            if let stmt = prepareStatement("SELECT id, date, content, created_at FROM day_notes ORDER BY created_at") {
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    var row: [String: String] = [:]
+                    row["id"] = "\(sqlite3_column_int64(stmt, 0))"
+                    row["date"] = String(cString: sqlite3_column_text(stmt, 1))
+                    row["content"] = String(cString: sqlite3_column_text(stmt, 2))
+                    row["created_at"] = String(cString: sqlite3_column_text(stmt, 3))
+                    export.notes.append(row)
+                }
+                sqlite3_finalize(stmt)
+            }
+
+            // summaries
+            if let stmt = prepareStatement("SELECT date, summary, generated_at FROM day_summaries ORDER BY date") {
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    var row: [String: String] = [:]
+                    row["date"] = String(cString: sqlite3_column_text(stmt, 0))
+                    row["summary"] = String(cString: sqlite3_column_text(stmt, 1))
+                    row["generated_at"] = String(cString: sqlite3_column_text(stmt, 2))
+                    export.summaries.append(row)
+                }
+                sqlite3_finalize(stmt)
+            }
+
+            // linear synced
+            if let stmt = prepareStatement("SELECT issue_id, identifier, title, completed_at, synced_at, note_id FROM linear_synced_issues ORDER BY synced_at") {
+                while sqlite3_step(stmt) == SQLITE_ROW {
+                    var row: [String: String] = [:]
+                    row["issue_id"] = String(cString: sqlite3_column_text(stmt, 0))
+                    row["identifier"] = String(cString: sqlite3_column_text(stmt, 1))
+                    row["title"] = String(cString: sqlite3_column_text(stmt, 2))
+                    row["completed_at"] = String(cString: sqlite3_column_text(stmt, 3))
+                    row["synced_at"] = String(cString: sqlite3_column_text(stmt, 4))
+                    if sqlite3_column_type(stmt, 5) != SQLITE_NULL {
+                        row["note_id"] = "\(sqlite3_column_int64(stmt, 5))"
+                    }
+                    export.linearSynced.append(row)
+                }
+                sqlite3_finalize(stmt)
+            }
+
+            return try? JSONEncoder().encode(export)
+        }
+    }
+
+    func importAll(from data: Data) -> Bool {
+        queue.sync {
+            guard let export = try? JSONDecoder().decode(FullExport.self, from: data) else { return false }
+
+            // Clear existing data
+            exec("DELETE FROM linear_synced_issues")
+            exec("DELETE FROM day_summaries")
+            exec("DELETE FROM day_notes")
+            exec("DELETE FROM entries")
+
+            // Import entries
+            for row in export.entries {
+                guard let date = row["date"], let type = row["type"], let start = row["start_time"] else { continue }
+                if let endTime = row["end_time"] {
+                    let sql = "INSERT INTO entries (date, type, start_time, end_time) VALUES (?, ?, ?, ?)"
+                    if let stmt = prepareStatement(sql) {
+                        bind(date, to: stmt, at: 1)
+                        bind(type, to: stmt, at: 2)
+                        bind(start, to: stmt, at: 3)
+                        bind(endTime, to: stmt, at: 4)
+                        sqlite3_step(stmt)
+                        sqlite3_finalize(stmt)
+                    }
+                } else {
+                    let sql = "INSERT INTO entries (date, type, start_time) VALUES (?, ?, ?)"
+                    if let stmt = prepareStatement(sql) {
+                        bind(date, to: stmt, at: 1)
+                        bind(type, to: stmt, at: 2)
+                        bind(start, to: stmt, at: 3)
+                        sqlite3_step(stmt)
+                        sqlite3_finalize(stmt)
+                    }
+                }
+            }
+
+            // Import notes
+            for row in export.notes {
+                guard let date = row["date"], let content = row["content"], let createdAt = row["created_at"] else { continue }
+                let sql = "INSERT INTO day_notes (date, content, created_at) VALUES (?, ?, ?)"
+                if let stmt = prepareStatement(sql) {
+                    bind(date, to: stmt, at: 1)
+                    bind(content, to: stmt, at: 2)
+                    bind(createdAt, to: stmt, at: 3)
+                    sqlite3_step(stmt)
+                    sqlite3_finalize(stmt)
+                }
+            }
+
+            // Import summaries
+            for row in export.summaries {
+                guard let date = row["date"], let summary = row["summary"], let gen = row["generated_at"] else { continue }
+                let sql = "INSERT OR REPLACE INTO day_summaries (date, summary, generated_at) VALUES (?, ?, ?)"
+                if let stmt = prepareStatement(sql) {
+                    bind(date, to: stmt, at: 1)
+                    bind(summary, to: stmt, at: 2)
+                    bind(gen, to: stmt, at: 3)
+                    sqlite3_step(stmt)
+                    sqlite3_finalize(stmt)
+                }
+            }
+
+            // Import linear synced
+            for row in export.linearSynced {
+                guard let issueId = row["issue_id"], let identifier = row["identifier"],
+                      let title = row["title"], let completedAt = row["completed_at"],
+                      let syncedAt = row["synced_at"] else { continue }
+                let sql = "INSERT OR REPLACE INTO linear_synced_issues (issue_id, identifier, title, completed_at, synced_at, note_id) VALUES (?, ?, ?, ?, ?, ?)"
+                if let stmt = prepareStatement(sql) {
+                    bind(issueId, to: stmt, at: 1)
+                    bind(identifier, to: stmt, at: 2)
+                    bind(title, to: stmt, at: 3)
+                    bind(completedAt, to: stmt, at: 4)
+                    bind(syncedAt, to: stmt, at: 5)
+                    if let noteIdStr = row["note_id"], let noteId = Int64(noteIdStr) {
+                        sqlite3_bind_int64(stmt, 6, noteId)
+                    } else {
+                        sqlite3_bind_null(stmt, 6)
+                    }
+                    sqlite3_step(stmt)
+                    sqlite3_finalize(stmt)
+                }
+            }
+
+            return true
+        }
+    }
+
+    func resetAll() {
+        queue.sync {
+            exec("DELETE FROM linear_synced_issues")
+            exec("DELETE FROM day_summaries")
+            exec("DELETE FROM day_notes")
+            exec("DELETE FROM entries")
+        }
     }
 }

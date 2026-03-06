@@ -1,18 +1,23 @@
 import SwiftUI
+import UniformTypeIdentifiers
+import Sparkle
 
 struct SettingsView: View {
     @ObservedObject var vm: TrackerViewModel
+    let updater: SPUUpdater
 
     @AppStorage("linearAPIKey") private var linearAPIKey = ""
     @AppStorage("syncInterval") private var syncInterval: Double = 300
     @AppStorage("linearResyncLookbackDays") private var linearResyncLookbackDays = 30
-    @AppStorage("dbPath") private var dbPath = ""
     @AppStorage("anthropicAPIKey") private var anthropicAPIKey = ""
 
     @State private var testResult: String?
     @State private var syncResult: String?
     @State private var isTesting = false
     @State private var isResyncing = false
+    @State private var showResetConfirm = false
+    @State private var showImportConfirm = false
+    @State private var pendingImportData: Data?
 
     var body: some View {
         ScrollView {
@@ -149,32 +154,98 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
                 SectionHeader(
                     title: "Storage",
-                    subtitle: "Choose the SQLite file used by the tracker."
+                    subtitle: "Export, import, or reset your tracking data."
                 )
 
-                TextField("Custom DB path (leave empty for default)", text: $dbPath)
-                    .textFieldStyle(.roundedBorder)
-
-                Text("Default location: `~/Documents/WorkTracker/tracker.db`.")
-                    .font(DesignSystem.Typography.caption)
-                    .foregroundStyle(DesignSystem.Colors.textSecondary)
-
                 HStack(spacing: DesignSystem.Layout.spacingSM) {
-                    if !dbPath.isEmpty {
-                        SecondaryChip(title: "Reset to default", icon: "arrow.uturn.backward", isActive: false, activeColor: DesignSystem.Colors.warning) {
-                            dbPath = ""
-                            DatabaseManager.shared.reopen()
-                            vm.refresh()
-                        }
+                    PrimaryActionButton(
+                        title: "Export Data",
+                        icon: "square.and.arrow.up",
+                        color: DesignSystem.Colors.brand,
+                        isLoading: false
+                    ) {
+                        exportFullData()
                     }
 
-                    SecondaryChip(title: "Reopen database", icon: "externaldrive", isActive: false, activeColor: DesignSystem.Colors.brand) {
-                        DatabaseManager.shared.reopen()
+                    PrimaryActionButton(
+                        title: "Import Data",
+                        icon: "square.and.arrow.down",
+                        color: DesignSystem.Colors.info,
+                        isLoading: false
+                    ) {
+                        importFullData()
+                    }
+
+                    PrimaryActionButton(
+                        title: "Reset All Data",
+                        icon: "trash",
+                        color: DesignSystem.Colors.danger,
+                        isLoading: false
+                    ) {
+                        showResetConfirm = true
+                    }
+                }
+
+                Text("Data is stored locally and backed up automatically by Time Machine.")
+                    .font(DesignSystem.Typography.caption)
+                    .foregroundStyle(DesignSystem.Colors.textSecondary)
+            }
+        }
+        .alert("Reset All Data?", isPresented: $showResetConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) {
+                DatabaseManager.shared.resetAll()
+                vm.refresh()
+            }
+        } message: {
+            Text("This will permanently delete all entries, notes, summaries, and sync history. This cannot be undone.")
+        }
+        .alert("Import Data?", isPresented: $showImportConfirm) {
+            Button("Cancel", role: .cancel) { pendingImportData = nil }
+            Button("Import", role: .destructive) {
+                if let data = pendingImportData {
+                    if DatabaseManager.shared.importAll(from: data) {
                         vm.refresh()
                     }
                 }
+                pendingImportData = nil
+            }
+        } message: {
+            Text("This will replace all existing data with the imported file. Current data will be lost.")
+        }
+    }
+
+    private func exportFullData() {
+        guard let data = DatabaseManager.shared.exportAll() else { return }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "WorkTracker-backup.json"
+        panel.title = "Export WorkTracker Data"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            try? data.write(to: url)
+        }
+    }
+
+    private func importFullData() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.title = "Import WorkTracker Data"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            if let data = try? Data(contentsOf: url) {
+                pendingImportData = data
+                showImportConfirm = true
             }
         }
+    }
+
+    private var appVersion: String {
+        let marketing = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "\(marketing) (\(build))"
     }
 
     private var aboutCard: some View {
@@ -185,9 +256,28 @@ struct SettingsView: View {
                     subtitle: "Current build capabilities."
                 )
 
-                infoRow(label: "Version", value: "1.2.0")
-                infoRow(label: "Data", value: "Shared SQLite tracker.db")
-                infoRow(label: "Experience", value: "History, analytics, redesigned dashboard")
+                infoRow(label: "Version", value: appVersion)
+                infoRow(label: "Data", value: "Local SQLite (Application Support)")
+                infoRow(label: "Updates", value: "Automatic via Sparkle")
+
+                HStack(spacing: DesignSystem.Layout.spacingSM) {
+                    PrimaryActionButton(
+                        title: "Check for Updates",
+                        icon: "arrow.clockwise",
+                        color: DesignSystem.Colors.brand,
+                        isLoading: false
+                    ) {
+                        updater.checkForUpdates()
+                    }
+
+                    Toggle("Auto-check", isOn: Binding(
+                        get: { updater.automaticallyChecksForUpdates },
+                        set: { updater.automaticallyChecksForUpdates = $0 }
+                    ))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .font(DesignSystem.Typography.caption)
+                }
             }
         }
     }
