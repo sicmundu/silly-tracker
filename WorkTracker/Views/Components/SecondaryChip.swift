@@ -26,7 +26,9 @@ struct SecondaryChip: View {
                 }
                 Text(title)
                     .font(isActive ? DesignSystem.Typography.captionBold : DesignSystem.Typography.caption)
+                    .lineLimit(1)
             }
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, DesignSystem.Layout.spacingMD)
             .padding(.vertical, DesignSystem.Layout.spacingSM)
             .background(

@@ -65,53 +65,10 @@ struct ContentView: View {
     private var topSection: some View {
         SectionCard {
             VStack(spacing: DesignSystem.Layout.spacingMD) {
-                HStack {
-                    VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
-                        Text("TODAY FOCUS")
-                            .font(DesignSystem.Typography.microBold)
-                            .tracking(1.2)
-                            .foregroundStyle(Theme.dim)
-                        Text(vm.isViewingToday ? "Live tracking dashboard" : "Reviewing \(vm.selectedDate.formatted(date: .abbreviated, time: .omitted))")
-                            .font(DesignSystem.Typography.caption)
-                            .foregroundStyle(Theme.text.opacity(0.82))
-                    }
+                heroMetaHeader
 
-                    Spacer()
-
-                    HStack(spacing: DesignSystem.Layout.spacingXS) {
-                        Image(systemName: contextWorkHours >= vm.dailyGoalHours ? "flag.checkered.circle.fill" : "scope")
-                            .font(DesignSystem.Typography.captionBold)
-                        Text("\(contextWorkHours, specifier: "%.1f") / \(vm.dailyGoalHours, specifier: "%.1f")h")
-                            .font(DesignSystem.Typography.monoCaption)
-                    }
-                    .foregroundStyle(contextWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent)
-                    .padding(.horizontal, DesignSystem.Layout.spacingSM)
-                    .padding(.vertical, 6)
-                    .background(
-                        Capsule()
-                            .fill((contextWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent).opacity(0.10))
-                    )
-                }
-
-                HStack(alignment: .firstTextBaseline, spacing: 0) {
-                    VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
-                        Text(timeString)
-                            .font(DesignSystem.Typography.monoHero)
-                            .monospacedDigit()
-                            .foregroundStyle(vm.activeEntry?.type.accentColor ?? Theme.text)
-                            .contentTransition(.numericText(countsDown: false))
-                            .animation(.easeInOut(duration: 0.15), value: timeString)
-
-                        Text(vm.activeEntry == nil ? "Ready to track your next block" : "Current clock time")
-                            .font(DesignSystem.Typography.caption)
-                            .foregroundStyle(Theme.dim)
-                    }
-
-                    Spacer()
-
-                    heroStatusPanel
-                }
-                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vm.activeEntry?.id)
+                heroTimeCluster
+                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vm.activeEntry?.id)
 
                 controlButtons
 
@@ -152,20 +109,116 @@ struct ContentView: View {
     private var contentSection: some View {
         SectionCard {
             VStack(spacing: 0) {
-                HStack(alignment: .center, spacing: DesignSystem.Layout.spacingMD) {
-                    tabBar
-
-                    Spacer(minLength: DesignSystem.Layout.spacingMD)
-
-                    contentContextBar
-                }
-                .padding(.bottom, DesignSystem.Layout.spacingMD)
+                contentHeader
+                    .padding(.bottom, DesignSystem.Layout.spacingMD)
 
                 Divider().overlay(Theme.border)
 
                 tabContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+    }
+
+    private var heroMetaHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top) {
+                heroMetaText
+                Spacer(minLength: DesignSystem.Layout.spacingMD)
+                heroGoalBadge
+            }
+
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
+                heroMetaText
+                heroGoalBadge
+            }
+        }
+    }
+
+    private var heroMetaText: some View {
+        VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
+            Text("TODAY FOCUS")
+                .font(DesignSystem.Typography.microBold)
+                .tracking(1.2)
+                .foregroundStyle(Theme.dim)
+            Text(vm.isViewingToday ? "Live tracking dashboard" : "Reviewing \(vm.selectedDate.formatted(date: .abbreviated, time: .omitted))")
+                .font(DesignSystem.Typography.caption)
+                .foregroundStyle(Theme.text.opacity(0.82))
+        }
+    }
+
+    private var heroGoalBadge: some View {
+        HStack(spacing: DesignSystem.Layout.spacingXS) {
+            Image(systemName: contextWorkHours >= vm.dailyGoalHours ? "flag.checkered.circle.fill" : "scope")
+                .font(DesignSystem.Typography.captionBold)
+            Text("\(contextWorkHours, specifier: "%.1f") / \(vm.dailyGoalHours, specifier: "%.1f")h")
+                .font(DesignSystem.Typography.monoCaption)
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+        }
+        .foregroundStyle(contextWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent)
+        .padding(.horizontal, DesignSystem.Layout.spacingSM)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill((contextWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent).opacity(0.10))
+        )
+    }
+
+    private var heroTimeCluster: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: DesignSystem.Layout.spacingMD) {
+                heroTimeBlock
+                Spacer(minLength: DesignSystem.Layout.spacingMD)
+                heroStatusPanel
+            }
+
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+                heroTimeBlock
+                heroStatusPanel
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var heroTimeBlock: some View {
+        VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
+            Text(timeString)
+                .font(DesignSystem.Typography.monoHero)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .foregroundStyle(vm.activeEntry?.type.accentColor ?? Theme.text)
+                .contentTransition(.numericText(countsDown: false))
+                .animation(.easeInOut(duration: 0.15), value: timeString)
+
+            Text(vm.activeEntry == nil ? "Ready to track your next block" : "Current clock time")
+                .font(DesignSystem.Typography.caption)
+                .foregroundStyle(Theme.dim)
+        }
+    }
+
+    private var contentHeader: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: DesignSystem.Layout.spacingMD) {
+                tabBarScroll
+                Spacer(minLength: DesignSystem.Layout.spacingMD)
+                contentContextBar
+            }
+
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+                tabBarScroll
+                contentContextBar
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var tabBarScroll: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            tabBar
+                .padding(.vertical, 1)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
