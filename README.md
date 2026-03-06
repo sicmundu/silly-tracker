@@ -16,6 +16,10 @@
   <a href="https://github.com/sicmundu/silly-tracker/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
 </p>
 
+<p align="center">
+  <img src="cover.jpg" alt="SillyTrack screenshot" />
+</p>
+
 ---
 
 ## The pitch
