@@ -209,24 +209,22 @@ SillyTrackApp.swift           App entry + Sparkle controller
 
 ## Release process
 
-Releases are built locally and published to GitHub:
+Push a version tag — CI does the rest:
 
 ```bash
-# 1. Build + sign
-./scripts/release.sh 1.3.0 4
-
-# 2. Update appcast.xml with generated entry
-
-# 3. Commit + push
-git add -A && git commit -m "release v1.3.0" && git push
-
-# 4. Create GitHub Release
-gh release create v1.3.0 .build/release/SillyTrack-1.3.0.zip --title 'v1.3.0'
+git tag v1.4.0 && git push --tags
 ```
 
-Users with the app installed get notified automatically.
+That's it. GitHub Actions will automatically:
 
-CI pipeline (`.github/workflows/release.yml`) can also build on tag push.
+1. Build the Release binary
+2. Sign the ZIP with Sparkle (EdDSA)
+3. Update `appcast.xml` and commit it to `main`
+4. Create a GitHub Release with the ZIP attached
+
+Users with the app installed get notified via Sparkle auto-update.
+
+> **Manual release** (if CI is unavailable): `./scripts/release.sh <version> <build_number>`, then manually update `appcast.xml` and create a GitHub Release.
 
 ---
 
