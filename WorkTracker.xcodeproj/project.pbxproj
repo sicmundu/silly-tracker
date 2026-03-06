@@ -359,10 +359,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WorkTracker/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_SUFeedURL = "https://raw.githubusercontent.com/sicmundu/silly-tracker/main/appcast.xml";
-				INFOPLIST_KEY_SUPublicEDKey = "u0KqqxDl1e58t0jEl1ww0TagCrYS21SCFMqFcD+3+hs=";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -385,10 +384,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WorkTracker/Info.plist;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_SUFeedURL = "https://raw.githubusercontent.com/sicmundu/silly-tracker/main/appcast.xml";
-				INFOPLIST_KEY_SUPublicEDKey = "u0KqqxDl1e58t0jEl1ww0TagCrYS21SCFMqFcD+3+hs=";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

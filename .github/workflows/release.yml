@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Resolve Sparkle package
+        run: |
+          xcodebuild -project WorkTracker.xcodeproj \
+            -scheme WorkTracker \
+            -resolvePackageDependencies \
+            -derivedDataPath .build/xcode
+
+      - name: Build Release
+        run: |
+          xcodebuild -project WorkTracker.xcodeproj \
+            -scheme WorkTracker \
+            -configuration Release \
+            -derivedDataPath .build/xcode \
+            MARKETING_VERSION="${{ steps.version.outputs.VERSION }}" \
+            build
+
+      - name: Create ZIP
+        run: |
+          mkdir -p .build/release
+          ditto -c -k --keepParent \
+            .build/xcode/Build/Products/Release/WorkTracker.app \
+            .build/release/WorkTracker-${{ steps.version.outputs.VERSION }}.zip
+
+      - name: Sign update with Sparkle
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          SPARKLE_BIN=".build/xcode/SourcePackages/artifacts/sparkle/Sparkle/bin"
+          ZIP=".build/release/WorkTracker-${{ steps.version.outputs.VERSION }}.zip"
+          VERSION="${{ steps.version.outputs.VERSION }}"
+
+          # Write private key to temp file for sign_update
+          echo "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle_key
+          SIGNATURE=$("$SPARKLE_BIN/sign_update" "$ZIP" --ed-key-file /tmp/sparkle_key 2>&1)
+          rm -f /tmp/sparkle_key
+
+          ED_SIG=$(echo "$SIGNATURE" | grep -o 'sparkle:edSignature="[^"]*"' | cut -d'"' -f2)
+          LENGTH=$(stat -f%z "$ZIP")
+          PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S %z")
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/WorkTracker-${VERSION}.zip"
+
+          # Generate appcast item
+          cat > .build/release/appcast_item.xml << XMLEOF
+          <item>
+              <title>Version $VERSION</title>
+              <pubDate>$PUB_DATE</pubDate>
+              <sparkle:version>$VERSION</sparkle:version>
+              <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+              <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+              <enclosure
+                  url="$DOWNLOAD_URL"
+                  length="$LENGTH"
+                  type="application/octet-stream"
+                  sparkle:edSignature="$ED_SIG"
+              />
+          </item>
+          XMLEOF
+
+          echo "ED_SIGNATURE=$ED_SIG" >> $GITHUB_OUTPUT
+          echo "LENGTH=$LENGTH" >> $GITHUB_OUTPUT
+
+      - name: Update appcast.xml
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Insert new item before </channel>
+          ITEM=$(cat .build/release/appcast_item.xml)
+          sed -i '' "s|</channel>|$ITEM\n    </channel>|" appcast.xml
+
+      - name: Commit updated appcast
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "chore: update appcast for v${{ steps.version.outputs.VERSION }}"
+          git push origin HEAD:main
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          gh release create "v${VERSION}" \
+            ".build/release/WorkTracker-${VERSION}.zip" \
+            --title "v${VERSION}" \
+            --generate-notes
