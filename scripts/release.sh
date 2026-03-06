@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # WorkTracker Release Script
-# Usage: ./scripts/release.sh [version]
-# Example: ./scripts/release.sh 1.2.0
+# Usage: ./scripts/release.sh <version> <build_number>
+# Example: ./scripts/release.sh 1.2.0 3
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -11,13 +11,17 @@ BUILD_DIR="$PROJECT_DIR/.build/release"
 SPARKLE_BIN="$PROJECT_DIR/.build/xcode/SourcePackages/artifacts/sparkle/Sparkle/bin"
 
 VERSION="${1:-}"
-if [ -z "$VERSION" ]; then
-    echo "Usage: $0 <version>"
-    echo "Example: $0 1.2.0"
+BUILD_NUM="${2:-}"
+if [ -z "$VERSION" ] || [ -z "$BUILD_NUM" ]; then
+    echo "Usage: $0 <version> <build_number>"
+    echo "Example: $0 1.2.0 3"
+    echo ""
+    echo "  version     = marketing version (e.g. 1.2.0)"
+    echo "  build_number = integer build number, must be higher than previous (e.g. 3)"
     exit 1
 fi
 
-echo "==> Building WorkTracker v$VERSION (Release)..."
+echo "==> Building WorkTracker v$VERSION (build $BUILD_NUM) Release..."
 cd "$PROJECT_DIR"
 
 xcodebuild -project WorkTracker.xcodeproj \
@@ -25,6 +29,7 @@ xcodebuild -project WorkTracker.xcodeproj \
     -configuration Release \
     -derivedDataPath .build/xcode \
     MARKETING_VERSION="$VERSION" \
+    CURRENT_PROJECT_VERSION="$BUILD_NUM" \
     build
 
 echo "==> Creating release archive..."
@@ -35,12 +40,10 @@ APP_PATH=".build/xcode/Build/Products/Release/WorkTracker.app"
 ZIP_NAME="WorkTracker-${VERSION}.zip"
 ZIP_PATH="$BUILD_DIR/$ZIP_NAME"
 
-# Create zip for distribution
 ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
 
 echo "==> Signing update with Sparkle..."
 SIGNATURE=$("$SPARKLE_BIN/sign_update" "$ZIP_PATH" 2>&1)
-# Extract edSignature and length
 ED_SIGNATURE=$(echo "$SIGNATURE" | grep -o 'sparkle:edSignature="[^"]*"' | cut -d'"' -f2)
 LENGTH=$(stat -f%z "$ZIP_PATH")
 
@@ -52,7 +55,7 @@ cat > "$BUILD_DIR/appcast_item.xml" << XMLEOF
         <item>
             <title>Version $VERSION</title>
             <pubDate>$PUB_DATE</pubDate>
-            <sparkle:version>$VERSION</sparkle:version>
+            <sparkle:version>$BUILD_NUM</sparkle:version>
             <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <enclosure
@@ -67,6 +70,7 @@ XMLEOF
 echo ""
 echo "=== RELEASE READY ==="
 echo "ZIP:       $ZIP_PATH"
+echo "Version:   $VERSION (build $BUILD_NUM)"
 echo "Signature: $ED_SIGNATURE"
 echo "Size:      $LENGTH bytes"
 echo ""
