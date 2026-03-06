@@ -108,6 +108,14 @@ struct DayStats: Identifiable {
         return "\(h):\(String(format: "%02d", m))"
     }
 
+    var formattedWorkDelta: String {
+        let sign = work >= 0 ? "+" : "-"
+        let total = Int(abs(work))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        return "\(sign)\(h):\(String(format: "%02d", m))"
+    }
+
     var shortDate: String {
         guard date.count >= 10 else { return date }
         let parts = date.split(separator: "-")
@@ -166,6 +174,10 @@ struct LinearIssue {
     let identifier: String
     let title: String
     let completedAt: String
+
+    var completedDate: Date? {
+        DatabaseManager.parseDate(completedAt)
+    }
 }
 
 // MARK: - Sync Status

@@ -6,8 +6,17 @@ import SQLite3
 final class DatabaseManager {
     static let shared = DatabaseManager()
 
+    private struct EntryRecord {
+        let id: Int64
+        let storedDate: String
+        let type: ActivityType
+        let startTime: Date
+        let endTime: Date?
+    }
+
     private var db: OpaquePointer?
     private let queue = DispatchQueue(label: "db.serial", qos: .userInitiated)
+    private let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     var dbPath: String {
         let custom = UserDefaults.standard.string(forKey: "dbPath") ?? ""
@@ -77,6 +86,10 @@ final class DatabaseManager {
                 note_id INTEGER
             )
         """)
+        exec("CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date)")
+        exec("CREATE INDEX IF NOT EXISTS idx_entries_start_time ON entries(start_time)")
+        exec("CREATE INDEX IF NOT EXISTS idx_notes_date_created ON day_notes(date, created_at)")
+        exec("CREATE INDEX IF NOT EXISTS idx_linear_note_id ON linear_synced_issues(note_id)")
     }
 
     // MARK: - Helpers
@@ -93,9 +106,29 @@ final class DatabaseManager {
         return true
     }
 
-    private static let isoFormatter: ISO8601DateFormatter = {
+    private func prepareStatement(_ sql: String) -> OpaquePointer? {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let msg = db.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? "unknown"
+            print("SQL prepare error: \(msg)")
+            return nil
+        }
+        return stmt
+    }
+
+    private func bind(_ value: String, to stmt: OpaquePointer?, at index: Int32) {
+        sqlite3_bind_text(stmt, index, (value as NSString).utf8String, -1, transient)
+    }
+
+    private static let isoFormatterWithFraction: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
         return f
     }()
 
@@ -106,121 +139,219 @@ final class DatabaseManager {
         return f
     }()
 
-    static func parseDate(_ s: String) -> Date {
-        isoFormatter.date(from: s)
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    static func parseDate(_ s: String) -> Date? {
+        isoFormatterWithFraction.date(from: s)
+            ?? isoFormatter.date(from: s)
             ?? simpleFmt.date(from: s)
-            ?? Date()
     }
 
     static func nowISO() -> String {
         simpleFmt.string(from: Date())
     }
 
-    private static let todayFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd"
-        return f
-    }()
-
     static func todayStr() -> String {
-        return todayFormatter.string(from: Date())
+        dayFormatter.string(from: Date())
+    }
+
+    static func dayString(from date: Date) -> String {
+        dayFormatter.string(from: date)
+    }
+
+    static func dateFromDayString(_ value: String) -> Date? {
+        dayFormatter.date(from: value)
+    }
+
+    static func dayBounds(for value: String) -> (start: Date, end: Date)? {
+        guard let start = dateFromDayString(value),
+              let end = Calendar.current.date(byAdding: .day, value: 1, to: start) else {
+            return nil
+        }
+        return (start, end)
+    }
+
+    private func loadEntryRecordsLocked() -> [EntryRecord] {
+        let sql = "SELECT id, date, type, start_time, end_time FROM entries ORDER BY start_time"
+        guard let stmt = prepareStatement(sql) else { return [] }
+        defer { sqlite3_finalize(stmt) }
+
+        var results: [EntryRecord] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let id = sqlite3_column_int64(stmt, 0)
+            let storedDate = String(cString: sqlite3_column_text(stmt, 1))
+            let type = ActivityType(rawValue: String(cString: sqlite3_column_text(stmt, 2))) ?? .work
+            let startStr = String(cString: sqlite3_column_text(stmt, 3))
+            let endStr = sqlite3_column_text(stmt, 4).map { String(cString: $0) }
+
+            guard let start = Self.parseDate(startStr) else {
+                print("Skipping entry \(id): invalid start_time \(startStr)")
+                continue
+            }
+
+            if let endStr, let end = Self.parseDate(endStr) {
+                results.append(EntryRecord(id: id, storedDate: storedDate, type: type, startTime: start, endTime: end))
+            } else if let endStr {
+                print("Skipping entry \(id): invalid end_time \(endStr)")
+            } else {
+                results.append(EntryRecord(id: id, storedDate: storedDate, type: type, startTime: start, endTime: nil))
+            }
+        }
+
+        return results
+    }
+
+    private func entriesLocked(for date: String) -> [TrackerEntry] {
+        guard let bounds = Self.dayBounds(for: date) else { return [] }
+        let now = Date()
+
+        return loadEntryRecordsLocked().compactMap { record in
+            let effectiveEnd = record.endTime ?? now
+            let sliceStart = max(record.startTime, bounds.start)
+            let sliceEnd = min(effectiveEnd, bounds.end)
+            guard sliceEnd > sliceStart else { return nil }
+
+            let displayEnd: Date?
+            if record.endTime == nil && sliceEnd == now {
+                displayEnd = nil
+            } else {
+                displayEnd = sliceEnd
+            }
+
+            return TrackerEntry(
+                id: record.id,
+                date: date,
+                type: record.type,
+                startTime: sliceStart,
+                endTime: displayEnd
+            )
+        }
+        .sorted { $0.startTime < $1.startTime }
+    }
+
+    private func workEditRestrictionLocked(for date: String) -> String? {
+        guard let bounds = Self.dayBounds(for: date) else { return "Invalid date" }
+        let now = Date()
+
+        let overlappingWork = loadEntryRecordsLocked().filter { record in
+            guard record.type == .work else { return false }
+            let effectiveEnd = record.endTime ?? now
+            return effectiveEnd > bounds.start && record.startTime < bounds.end
+        }
+
+        guard !overlappingWork.isEmpty else { return "No work entries" }
+
+        if overlappingWork.contains(where: { $0.endTime == nil }) {
+            return "Stop the active timer first"
+        }
+
+        if overlappingWork.contains(where: {
+            $0.startTime < bounds.start || (($0.endTime ?? bounds.end) > bounds.end)
+        }) {
+            return "Cross-midnight work can't be edited as a single total"
+        }
+
+        return nil
     }
 
     // MARK: - Entries
 
     func getActive() -> TrackerEntry? {
         queue.sync {
-            let sql = "SELECT id, date, type, start_time FROM entries WHERE end_time IS NULL LIMIT 1"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            let sql = "SELECT id, date, type, start_time FROM entries WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1"
+            guard let stmt = prepareStatement(sql) else { return nil }
             defer { sqlite3_finalize(stmt) }
 
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                let id = sqlite3_column_int64(stmt, 0)
-                let date = String(cString: sqlite3_column_text(stmt, 1))
-                let typeStr = String(cString: sqlite3_column_text(stmt, 2))
-                let startStr = String(cString: sqlite3_column_text(stmt, 3))
-                return TrackerEntry(
-                    id: id,
-                    date: date,
-                    type: ActivityType(rawValue: typeStr) ?? .work,
-                    startTime: Self.parseDate(startStr),
-                    endTime: nil
-                )
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+
+            let id = sqlite3_column_int64(stmt, 0)
+            let date = String(cString: sqlite3_column_text(stmt, 1))
+            let typeStr = String(cString: sqlite3_column_text(stmt, 2))
+            let startStr = String(cString: sqlite3_column_text(stmt, 3))
+            guard let startTime = Self.parseDate(startStr) else {
+                print("Skipping active entry \(id): invalid start_time \(startStr)")
+                return nil
             }
-            return nil
+
+            return TrackerEntry(
+                id: id,
+                date: date,
+                type: ActivityType(rawValue: typeStr) ?? .work,
+                startTime: startTime,
+                endTime: nil
+            )
         }
     }
 
     func stopActive() -> TrackerEntry? {
         queue.sync {
-            let sql = "SELECT id, date, type, start_time FROM entries WHERE end_time IS NULL LIMIT 1"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            let selectSQL = "SELECT id, date, type, start_time FROM entries WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1"
+            guard let selectStmt = prepareStatement(selectSQL) else { return nil }
+            defer { sqlite3_finalize(selectStmt) }
 
-            var entry: TrackerEntry?
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                let id = sqlite3_column_int64(stmt, 0)
-                let date = String(cString: sqlite3_column_text(stmt, 1))
-                let typeStr = String(cString: sqlite3_column_text(stmt, 2))
-                let startStr = String(cString: sqlite3_column_text(stmt, 3))
-                entry = TrackerEntry(
-                    id: id,
-                    date: date,
-                    type: ActivityType(rawValue: typeStr) ?? .work,
-                    startTime: Self.parseDate(startStr),
-                    endTime: Date()
-                )
-            }
-            sqlite3_finalize(stmt)
+            guard sqlite3_step(selectStmt) == SQLITE_ROW else { return nil }
 
-            if let e = entry {
-                let now = Self.nowISO()
-                exec("UPDATE entries SET end_time = '\(now)' WHERE id = \(e.id)")
+            let id = sqlite3_column_int64(selectStmt, 0)
+            let date = String(cString: sqlite3_column_text(selectStmt, 1))
+            let typeStr = String(cString: sqlite3_column_text(selectStmt, 2))
+            let startStr = String(cString: sqlite3_column_text(selectStmt, 3))
+            guard let startTime = Self.parseDate(startStr) else {
+                print("Skipping active entry \(id): invalid start_time \(startStr)")
+                return nil
             }
-            return entry
+
+            let endTime = Date()
+            let updateSQL = "UPDATE entries SET end_time = ? WHERE id = ?"
+            guard let updateStmt = prepareStatement(updateSQL) else { return nil }
+            defer { sqlite3_finalize(updateStmt) }
+
+            bind(Self.nowISO(), to: updateStmt, at: 1)
+            sqlite3_bind_int64(updateStmt, 2, id)
+            guard sqlite3_step(updateStmt) == SQLITE_DONE else { return nil }
+
+            return TrackerEntry(
+                id: id,
+                date: date,
+                type: ActivityType(rawValue: typeStr) ?? .work,
+                startTime: startTime,
+                endTime: endTime
+            )
         }
     }
 
     func startActivity(_ type: ActivityType) {
         queue.sync {
             let now = Self.nowISO()
-            exec("UPDATE entries SET end_time = '\(now)' WHERE end_time IS NULL")
 
-            let today = Self.todayStr()
-            exec("""
-                INSERT INTO entries (date, type, start_time) VALUES ('\(today)', '\(type.rawValue)', '\(now)')
-            """)
+            if let closeStmt = prepareStatement("UPDATE entries SET end_time = ? WHERE end_time IS NULL") {
+                bind(now, to: closeStmt, at: 1)
+                sqlite3_step(closeStmt)
+                sqlite3_finalize(closeStmt)
+            }
+
+            let insertSQL = "INSERT INTO entries (date, type, start_time) VALUES (?, ?, ?)"
+            guard let insertStmt = prepareStatement(insertSQL) else { return }
+            defer { sqlite3_finalize(insertStmt) }
+
+            bind(Self.todayStr(), to: insertStmt, at: 1)
+            bind(type.rawValue, to: insertStmt, at: 2)
+            bind(now, to: insertStmt, at: 3)
+            sqlite3_step(insertStmt)
         }
     }
 
     func getTodayEntries() -> [TrackerEntry] {
+        getEntries(for: Self.todayStr())
+    }
+
+    func getEntries(for date: String) -> [TrackerEntry] {
         queue.sync {
-            let today = Self.todayStr()
-            let sql = "SELECT id, date, type, start_time, end_time FROM entries WHERE date = ? ORDER BY start_time"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-            defer { sqlite3_finalize(stmt) }
-
-            sqlite3_bind_text(stmt, 1, (today as NSString).utf8String, -1, nil)
-
-            var results: [TrackerEntry] = []
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                let id = sqlite3_column_int64(stmt, 0)
-                let date = String(cString: sqlite3_column_text(stmt, 1))
-                let typeStr = String(cString: sqlite3_column_text(stmt, 2))
-                let startStr = String(cString: sqlite3_column_text(stmt, 3))
-                let endStr = sqlite3_column_text(stmt, 4).map { String(cString: $0) }
-
-                results.append(TrackerEntry(
-                    id: id,
-                    date: date,
-                    type: ActivityType(rawValue: typeStr) ?? .work,
-                    startTime: Self.parseDate(startStr),
-                    endTime: endStr.map { Self.parseDate($0) }
-                ))
-            }
-            return results
+            entriesLocked(for: date)
         }
     }
 
@@ -228,36 +359,40 @@ final class DatabaseManager {
 
     func getStats(from startDate: String, to endDate: String) -> [DayStats] {
         queue.sync {
-            let sql = """
-                SELECT date, type, start_time, end_time FROM entries
-                WHERE date >= ? AND date <= ? ORDER BY date, start_time
-            """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
-            defer { sqlite3_finalize(stmt) }
+            guard let startBounds = Self.dayBounds(for: startDate),
+                  let endBounds = Self.dayBounds(for: toDateFloor(to: endDate)) else {
+                return []
+            }
 
-            sqlite3_bind_text(stmt, 1, (startDate as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (endDate as NSString).utf8String, -1, nil)
-
-            var days: [String: DayStats] = [:]
+            let rangeStart = startBounds.start
+            let rangeEnd = endBounds.end
+            let calendar = Calendar.current
             let now = Date()
+            var days: [String: DayStats] = [:]
 
-            while sqlite3_step(stmt) == SQLITE_ROW {
-                let date = String(cString: sqlite3_column_text(stmt, 0))
-                let typeStr = String(cString: sqlite3_column_text(stmt, 1))
-                let startStr = String(cString: sqlite3_column_text(stmt, 2))
-                let endStr = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
+            for record in loadEntryRecordsLocked() {
+                let effectiveEnd = record.endTime ?? now
+                guard effectiveEnd > rangeStart, record.startTime < rangeEnd else { continue }
 
-                let s = Self.parseDate(startStr)
-                let e = endStr.map { Self.parseDate($0) } ?? now
-                let sec = e.timeIntervalSince(s)
+                var cursor = calendar.startOfDay(for: max(record.startTime, rangeStart))
+                while cursor < effectiveEnd && cursor < rangeEnd {
+                    guard let nextDay = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
 
-                if days[date] == nil { days[date] = DayStats(date: date) }
-                switch typeStr {
-                case "work": days[date]!.work += sec
-                case "lunch": days[date]!.lunch += sec
-                case "break": days[date]!.breakTime += sec
-                default: break
+                    let sliceStart = max(record.startTime, cursor, rangeStart)
+                    let sliceEnd = min(effectiveEnd, nextDay, rangeEnd)
+                    if sliceEnd > sliceStart {
+                        let key = Self.dayString(from: cursor)
+                        var day = days[key] ?? DayStats(date: key)
+                        let seconds = sliceEnd.timeIntervalSince(sliceStart)
+                        switch record.type {
+                        case .work: day.work += seconds
+                        case .lunch: day.lunch += seconds
+                        case .break: day.breakTime += seconds
+                        }
+                        days[key] = day
+                    }
+
+                    cursor = nextDay
                 }
             }
 
@@ -267,68 +402,92 @@ final class DatabaseManager {
 
     // MARK: - Adjust Work Hours
 
-    func adjustWorkHours(date: String, targetSeconds: Double) {
+    @discardableResult
+    func adjustWorkHours(date: String, targetSeconds: Double) -> Bool {
         queue.sync {
+            guard workEditRestrictionLocked(for: date) == nil else { return false }
+
             let sql = "SELECT id, start_time, end_time FROM entries WHERE date = ? AND type = 'work' ORDER BY start_time"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            guard let stmt = prepareStatement(sql) else { return false }
+            bind(date, to: stmt, at: 1)
 
             struct WorkEntry {
                 let id: Int64
                 let start: Date
-                let end: Date
-                let dur: Double
-                let isOpen: Bool
+                let duration: Double
             }
 
             var entries: [WorkEntry] = []
-            let now = Date()
-
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let id = sqlite3_column_int64(stmt, 0)
                 let startStr = String(cString: sqlite3_column_text(stmt, 1))
                 let endStr = sqlite3_column_text(stmt, 2).map { String(cString: $0) }
-                let s = Self.parseDate(startStr)
-                let e = endStr.map { Self.parseDate($0) } ?? now
-                let dur = e.timeIntervalSince(s)
-                entries.append(WorkEntry(id: id, start: s, end: e, dur: dur, isOpen: endStr == nil))
+
+                guard let start = Self.parseDate(startStr),
+                      let endStr,
+                      let end = Self.parseDate(endStr) else {
+                    continue
+                }
+
+                entries.append(WorkEntry(id: id, start: start, duration: end.timeIntervalSince(start)))
             }
             sqlite3_finalize(stmt)
 
-            guard !entries.isEmpty else { return }
+            guard !entries.isEmpty else { return false }
 
             if targetSeconds <= 0 {
-                exec("DELETE FROM entries WHERE date = '\(date)' AND type = 'work'")
-                return
+                let deleteSQL = "DELETE FROM entries WHERE date = ? AND type = 'work'"
+                guard let deleteStmt = prepareStatement(deleteSQL) else { return false }
+                defer { sqlite3_finalize(deleteStmt) }
+                bind(date, to: deleteStmt, at: 1)
+                return sqlite3_step(deleteStmt) == SQLITE_DONE
             }
 
-            let total = entries.reduce(0.0) { $0 + $1.dur }
+            let total = entries.reduce(0.0) { $0 + $1.duration }
             let diff = targetSeconds - total
-
-            // Adjust the last work entry
             let last = entries.last!
-            let newDur = last.dur + diff
+            let newDuration = last.duration + diff
 
-            if newDur < 0 {
-                // Walk forward and trim
+            if newDuration < 0 {
                 var remaining = targetSeconds
-                for e in entries {
+                for entry in entries {
                     if remaining <= 0 {
-                        exec("DELETE FROM entries WHERE id = \(e.id)")
-                    } else if e.dur <= remaining {
-                        remaining -= e.dur
-                    } else {
-                        let newEnd = e.start.addingTimeInterval(remaining)
-                        let newEndStr = Self.simpleFmt.string(from: newEnd)
-                        exec("UPDATE entries SET end_time = '\(newEndStr)' WHERE id = \(e.id)")
-                        remaining = 0
+                        guard let deleteStmt = prepareStatement("DELETE FROM entries WHERE id = ?") else { return false }
+                        sqlite3_bind_int64(deleteStmt, 1, entry.id)
+                        sqlite3_step(deleteStmt)
+                        sqlite3_finalize(deleteStmt)
+                        continue
                     }
+
+                    if entry.duration <= remaining {
+                        remaining -= entry.duration
+                        continue
+                    }
+
+                    let newEnd = entry.start.addingTimeInterval(remaining)
+                    guard let updateStmt = prepareStatement("UPDATE entries SET end_time = ? WHERE id = ?") else { return false }
+                    bind(Self.simpleFmt.string(from: newEnd), to: updateStmt, at: 1)
+                    sqlite3_bind_int64(updateStmt, 2, entry.id)
+                    sqlite3_step(updateStmt)
+                    sqlite3_finalize(updateStmt)
+                    remaining = 0
                 }
             } else {
-                let newEnd = last.start.addingTimeInterval(newDur)
-                let newEndStr = Self.simpleFmt.string(from: newEnd)
-                exec("UPDATE entries SET end_time = '\(newEndStr)' WHERE id = \(last.id)")
+                let newEnd = last.start.addingTimeInterval(newDuration)
+                guard let updateStmt = prepareStatement("UPDATE entries SET end_time = ? WHERE id = ?") else { return false }
+                defer { sqlite3_finalize(updateStmt) }
+                bind(Self.simpleFmt.string(from: newEnd), to: updateStmt, at: 1)
+                sqlite3_bind_int64(updateStmt, 2, last.id)
+                guard sqlite3_step(updateStmt) == SQLITE_DONE else { return false }
             }
+
+            return true
+        }
+    }
+
+    func workEditRestriction(for date: String) -> String? {
+        queue.sync {
+            workEditRestrictionLocked(for: date)
         }
     }
 
@@ -337,11 +496,10 @@ final class DatabaseManager {
     func getNotes(for date: String) -> [DayNote] {
         queue.sync {
             let sql = "SELECT id, date, content, created_at FROM day_notes WHERE date = ? ORDER BY created_at"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            guard let stmt = prepareStatement(sql) else { return [] }
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, (date as NSString).utf8String, -1, nil)
+            bind(date, to: stmt, at: 1)
 
             var results: [DayNote] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
@@ -357,23 +515,22 @@ final class DatabaseManager {
     }
 
     func addNote(date: String, content: String) {
-        queue.sync {
-            let now = Self.nowISO()
-            let sql = "INSERT INTO day_notes (date, content, created_at) VALUES (?, ?, ?)"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
-            defer { sqlite3_finalize(stmt) }
-
-            sqlite3_bind_text(stmt, 1, (date as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (content as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 3, (now as NSString).utf8String, -1, nil)
-            sqlite3_step(stmt)
-        }
+        _ = addNoteReturningId(date: date, content: content)
     }
 
     func deleteNote(id: Int64) {
         queue.sync {
-            exec("DELETE FROM day_notes WHERE id = \(id)")
+            if let syncStmt = prepareStatement("DELETE FROM linear_synced_issues WHERE note_id = ?") {
+                sqlite3_bind_int64(syncStmt, 1, id)
+                sqlite3_step(syncStmt)
+                sqlite3_finalize(syncStmt)
+            }
+
+            if let noteStmt = prepareStatement("DELETE FROM day_notes WHERE id = ?") {
+                sqlite3_bind_int64(noteStmt, 1, id)
+                sqlite3_step(noteStmt)
+                sqlite3_finalize(noteStmt)
+            }
         }
     }
 
@@ -382,20 +539,17 @@ final class DatabaseManager {
     func getSummary(for date: String) -> DaySummary? {
         queue.sync {
             let sql = "SELECT date, summary, generated_at FROM day_summaries WHERE date = ?"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return nil }
+            guard let stmt = prepareStatement(sql) else { return nil }
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, (date as NSString).utf8String, -1, nil)
+            bind(date, to: stmt, at: 1)
 
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                return DaySummary(
-                    date: String(cString: sqlite3_column_text(stmt, 0)),
-                    summary: String(cString: sqlite3_column_text(stmt, 1)),
-                    generatedAt: String(cString: sqlite3_column_text(stmt, 2))
-                )
-            }
-            return nil
+            guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+            return DaySummary(
+                date: String(cString: sqlite3_column_text(stmt, 0)),
+                summary: String(cString: sqlite3_column_text(stmt, 1)),
+                generatedAt: String(cString: sqlite3_column_text(stmt, 2))
+            )
         }
     }
 
@@ -407,13 +561,12 @@ final class DatabaseManager {
                 VALUES (?, ?, ?)
                 ON CONFLICT(date) DO UPDATE SET summary=excluded.summary, generated_at=excluded.generated_at
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            guard let stmt = prepareStatement(sql) else { return }
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, (date as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (summary as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 3, (now as NSString).utf8String, -1, nil)
+            bind(date, to: stmt, at: 1)
+            bind(summary, to: stmt, at: 2)
+            bind(now, to: stmt, at: 3)
             sqlite3_step(stmt)
         }
     }
@@ -421,78 +574,52 @@ final class DatabaseManager {
     // MARK: - Export
 
     func getExportRows(period: String) -> [ExportRow] {
-        queue.sync {
-            let today = Date()
-            let cal = Calendar.current
-            let f = DateFormatter()
-            f.dateFormat = "yyyy-MM-dd"
+        let today = Date()
+        let calendar = Calendar.current
 
-            let startDate: String
-            let endDate = f.string(from: today)
+        let startDate: Date
+        switch period {
+        case "week":
+            startDate = calendar.date(byAdding: .day, value: -6, to: today) ?? today
+        case "month":
+            startDate = calendar.date(from: calendar.dateComponents([.year, .month], from: today)) ?? today
+        case "year":
+            startDate = calendar.date(from: calendar.dateComponents([.year], from: today)) ?? today
+        case "all":
+            startDate = Self.dateFromDayString("2000-01-01") ?? today
+        default:
+            startDate = today
+        }
 
-            switch period {
-            case "week":
-                let weekStart = cal.date(byAdding: .day, value: -(cal.component(.weekday, from: today) - 2), to: today)!
-                startDate = f.string(from: weekStart)
-            case "month":
-                let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: today))!
-                startDate = f.string(from: monthStart)
-            case "year":
-                let yearStart = cal.date(from: cal.dateComponents([.year], from: today))!
-                startDate = f.string(from: yearStart)
-            case "all":
-                startDate = "2000-01-01"
-            default:
-                startDate = endDate
+        let startDay = Self.dayString(from: startDate)
+        let endDay = Self.dayString(from: today)
+        let stats = getStats(from: startDay, to: endDay)
+        let summaries = getSummaries(from: startDay, to: endDay)
+
+        return stats
+            .sorted { $0.date < $1.date }
+            .map { day in
+                let hours = round((day.work / 3600.0) * 100) / 100
+                return ExportRow(date: day.date, hours: hours, summary: summaries[day.date] ?? "")
             }
+    }
 
-            // Get entries
-            let entrySql = """
-                SELECT date, type, start_time, end_time FROM entries
-                WHERE date >= ? AND date <= ? ORDER BY date, start_time
-            """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, entrySql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+    private func getSummaries(from startDate: String, to endDate: String) -> [String: String] {
+        queue.sync {
+            let sql = "SELECT date, summary FROM day_summaries WHERE date >= ? AND date <= ?"
+            guard let stmt = prepareStatement(sql) else { return [:] }
+            defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, (startDate as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (endDate as NSString).utf8String, -1, nil)
+            bind(startDate, to: stmt, at: 1)
+            bind(endDate, to: stmt, at: 2)
 
-            var dailyWork: [String: Double] = [:]
-            let now = Date()
-
+            var summaries: [String: String] = [:]
             while sqlite3_step(stmt) == SQLITE_ROW {
                 let date = String(cString: sqlite3_column_text(stmt, 0))
-                let typeStr = String(cString: sqlite3_column_text(stmt, 1))
-                let startStr = String(cString: sqlite3_column_text(stmt, 2))
-                let endStr = sqlite3_column_text(stmt, 3).map { String(cString: $0) }
-
-                if typeStr == "work" {
-                    let s = Self.parseDate(startStr)
-                    let e = endStr.map { Self.parseDate($0) } ?? now
-                    dailyWork[date, default: 0] += e.timeIntervalSince(s)
-                }
+                let summary = String(cString: sqlite3_column_text(stmt, 1))
+                summaries[date] = summary
             }
-            sqlite3_finalize(stmt)
-
-            // Get summaries
-            let sumSql = "SELECT date, summary FROM day_summaries WHERE date >= ? AND date <= ?"
-            var sumStmt: OpaquePointer?
-            var summaries: [String: String] = [:]
-            if sqlite3_prepare_v2(db, sumSql, -1, &sumStmt, nil) == SQLITE_OK {
-                sqlite3_bind_text(sumStmt, 1, (startDate as NSString).utf8String, -1, nil)
-                sqlite3_bind_text(sumStmt, 2, (endDate as NSString).utf8String, -1, nil)
-                while sqlite3_step(sumStmt) == SQLITE_ROW {
-                    let date = String(cString: sqlite3_column_text(sumStmt, 0))
-                    let summary = String(cString: sqlite3_column_text(sumStmt, 1))
-                    summaries[date] = summary
-                }
-                sqlite3_finalize(sumStmt)
-            }
-
-            return dailyWork.keys.sorted().map { date in
-                let hours = (dailyWork[date] ?? 0) / 3600.0
-                return ExportRow(date: date, hours: round(hours * 100) / 100, summary: summaries[date] ?? "")
-            }
+            return summaries
         }
     }
 
@@ -501,11 +628,10 @@ final class DatabaseManager {
     func isIssueSynced(_ issueId: String) -> Bool {
         queue.sync {
             let sql = "SELECT 1 FROM linear_synced_issues WHERE issue_id = ? LIMIT 1"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+            guard let stmt = prepareStatement(sql) else { return false }
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, (issueId as NSString).utf8String, -1, nil)
+            bind(issueId, to: stmt, at: 1)
             return sqlite3_step(stmt) == SQLITE_ROW
         }
     }
@@ -514,19 +640,18 @@ final class DatabaseManager {
         queue.sync {
             let now = Self.nowISO()
             let sql = """
-                INSERT OR IGNORE INTO linear_synced_issues
+                INSERT OR REPLACE INTO linear_synced_issues
                 (issue_id, identifier, title, completed_at, synced_at, note_id)
                 VALUES (?, ?, ?, ?, ?, ?)
             """
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+            guard let stmt = prepareStatement(sql) else { return }
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, (issue.id as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (issue.identifier as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 3, (issue.title as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 4, (issue.completedAt as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 5, (now as NSString).utf8String, -1, nil)
+            bind(issue.id, to: stmt, at: 1)
+            bind(issue.identifier, to: stmt, at: 2)
+            bind(issue.title, to: stmt, at: 3)
+            bind(issue.completedAt, to: stmt, at: 4)
+            bind(now, to: stmt, at: 5)
             sqlite3_bind_int64(stmt, 6, noteId)
             sqlite3_step(stmt)
         }
@@ -536,14 +661,13 @@ final class DatabaseManager {
         queue.sync {
             let now = Self.nowISO()
             let sql = "INSERT INTO day_notes (date, content, created_at) VALUES (?, ?, ?)"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return -1 }
+            guard let stmt = prepareStatement(sql) else { return -1 }
             defer { sqlite3_finalize(stmt) }
 
-            sqlite3_bind_text(stmt, 1, (date as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 2, (content as NSString).utf8String, -1, nil)
-            sqlite3_bind_text(stmt, 3, (now as NSString).utf8String, -1, nil)
-            sqlite3_step(stmt)
+            bind(date, to: stmt, at: 1)
+            bind(content, to: stmt, at: 2)
+            bind(now, to: stmt, at: 3)
+            guard sqlite3_step(stmt) == SQLITE_DONE else { return -1 }
             return sqlite3_last_insert_rowid(db)
         }
     }
@@ -551,18 +675,20 @@ final class DatabaseManager {
     func getSyncStatus() -> LinearSyncStatus {
         queue.sync {
             let sql = "SELECT COUNT(*), MAX(synced_at) FROM linear_synced_issues"
-            var stmt: OpaquePointer?
-            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            guard let stmt = prepareStatement(sql) else {
                 return LinearSyncStatus()
             }
             defer { sqlite3_finalize(stmt) }
 
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                let count = Int(sqlite3_column_int(stmt, 0))
-                let lastSync = sqlite3_column_text(stmt, 1).map { Self.parseDate(String(cString: $0)) }
-                return LinearSyncStatus(totalSynced: count, lastSync: lastSync)
+            guard sqlite3_step(stmt) == SQLITE_ROW else {
+                return LinearSyncStatus()
             }
-            return LinearSyncStatus()
+
+            let count = Int(sqlite3_column_int(stmt, 0))
+            let lastSync = sqlite3_column_text(stmt, 1)
+                .map { String(cString: $0) }
+                .flatMap(Self.parseDate)
+            return LinearSyncStatus(totalSynced: count, lastSync: lastSync)
         }
     }
 
@@ -570,8 +696,44 @@ final class DatabaseManager {
 
     func deleteDay(_ date: String) {
         queue.sync {
-            exec("DELETE FROM entries WHERE date = '\(date)'")
-            exec("DELETE FROM day_notes WHERE date = '\(date)'")
+            guard let bounds = Self.dayBounds(for: date) else { return }
+            let startISO = Self.simpleFmt.string(from: bounds.start)
+            let endISO = Self.simpleFmt.string(from: bounds.end)
+
+            if let syncStmt = prepareStatement("""
+                DELETE FROM linear_synced_issues
+                WHERE note_id IN (SELECT id FROM day_notes WHERE date = ?)
+            """) {
+                bind(date, to: syncStmt, at: 1)
+                sqlite3_step(syncStmt)
+                sqlite3_finalize(syncStmt)
+            }
+
+            if let notesStmt = prepareStatement("DELETE FROM day_notes WHERE date = ?") {
+                bind(date, to: notesStmt, at: 1)
+                sqlite3_step(notesStmt)
+                sqlite3_finalize(notesStmt)
+            }
+
+            if let summaryStmt = prepareStatement("DELETE FROM day_summaries WHERE date = ?") {
+                bind(date, to: summaryStmt, at: 1)
+                sqlite3_step(summaryStmt)
+                sqlite3_finalize(summaryStmt)
+            }
+
+            if let entriesStmt = prepareStatement("""
+                DELETE FROM entries
+                WHERE start_time >= ? AND start_time < ?
+            """) {
+                bind(startISO, to: entriesStmt, at: 1)
+                bind(endISO, to: entriesStmt, at: 2)
+                sqlite3_step(entriesStmt)
+                sqlite3_finalize(entriesStmt)
+            }
         }
+    }
+
+    private func toDateFloor(to value: String) -> String {
+        value
     }
 }

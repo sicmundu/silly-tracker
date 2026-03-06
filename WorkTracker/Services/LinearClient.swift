@@ -5,6 +5,13 @@ final class LinearClient {
     static let shared = LinearClient()
 
     private let apiURL = URL(string: "https://api.linear.app/graphql")!
+    private let lastSuccessfulSyncKey = "linearLastSuccessfulSyncAt"
+
+    private static let apiDateFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 
     private var apiKey: String {
         UserDefaults.standard.string(forKey: "linearAPIKey") ?? ""
@@ -25,7 +32,7 @@ final class LinearClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "Authorization")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.timeoutInterval = 15
+        request.timeoutInterval = 20
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -42,27 +49,37 @@ final class LinearClient {
 
     // MARK: - Fetch completed issues
 
-    func fetchCompletedIssues(since: String? = nil) async throws -> [LinearIssue] {
-        let sinceDate: String
-        if let since {
-            sinceDate = since
-        } else {
-            let cal = Calendar.current
-            let weekAgo = cal.date(byAdding: .day, value: -7, to: Date())!
-            let f = DateFormatter()
-            f.dateFormat = "yyyy-MM-dd"
-            sinceDate = f.string(from: weekAgo)
+    private func resolvedSyncStartDate(explicitSince: String?, lookbackDays: Int?) -> Date {
+        if let explicitSince,
+           let explicitDate = DatabaseManager.dateFromDayString(explicitSince) {
+            return explicitDate
         }
 
+        if let lookbackDays {
+            let start = Calendar.current.date(byAdding: .day, value: -(max(lookbackDays, 1) - 1), to: Date()) ?? Date()
+            return Calendar.current.startOfDay(for: start)
+        }
+
+        if let stored = UserDefaults.standard.string(forKey: lastSuccessfulSyncKey),
+           let lastSync = DatabaseManager.parseDate(stored) {
+            return Calendar.current.date(byAdding: .day, value: -1, to: lastSync) ?? lastSync
+        }
+
+        return DatabaseManager.dateFromDayString("2000-01-01") ?? .distantPast
+    }
+
+    func fetchCompletedIssues(since: String? = nil, lookbackDays: Int? = nil) async throws -> [LinearIssue] {
+        let sinceDate = resolvedSyncStartDate(explicitSince: since, lookbackDays: lookbackDays)
         let query = """
-        query($after: DateTimeOrDuration!) {
+        query($afterDate: DateTimeOrDuration!, $cursor: String) {
           issues(
             filter: {
               state: { type: { eq: "completed" } }
-              completedAt: { gte: $after }
+              completedAt: { gte: $afterDate }
             }
             orderBy: updatedAt
-            first: 50
+            first: 100
+            after: $cursor
           ) {
             nodes {
               id
@@ -73,33 +90,55 @@ final class LinearClient {
                 isMe
               }
             }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
           }
         }
         """
 
-        let result: GraphQLResponse<IssuesData> = try await graphql(
-            query,
-            variables: ["after": "\(sinceDate)T00:00:00.000Z"]
-        )
+        var allIssues: [LinearIssue] = []
+        var cursor: String?
 
-        if let errors = result.errors, let first = errors.first {
-            throw LinearError.graphql(first.message)
-        }
+        repeat {
+            var variables: [String: Any] = [
+                "afterDate": Self.apiDateFormatter.string(from: sinceDate)
+            ]
+            if let cursor {
+                variables["cursor"] = cursor
+            }
 
-        guard let nodes = result.data?.issues.nodes else { return [] }
+            let result: GraphQLResponse<IssuesData> = try await graphql(query, variables: variables)
+            if let errors = result.errors, let first = errors.first {
+                throw LinearError.graphql(first.message)
+            }
 
-        return nodes
-            .filter { $0.assignee?.isMe == true }
-            .map { LinearIssue(id: $0.id, identifier: $0.identifier, title: $0.title, completedAt: $0.completedAt) }
+            guard let issues = result.data?.issues else { break }
+            allIssues.append(contentsOf: issues.nodes
+                .filter { $0.assignee?.isMe == true }
+                .map {
+                    LinearIssue(
+                        id: $0.id,
+                        identifier: $0.identifier,
+                        title: $0.title,
+                        completedAt: $0.completedAt
+                    )
+                })
+
+            cursor = issues.pageInfo.hasNextPage ? issues.pageInfo.endCursor : nil
+        } while cursor != nil
+
+        return allIssues
     }
 
     // MARK: - Sync to notes
 
-    func syncToNotes() async -> (added: Int, skipped: Int, error: String?) {
+    func syncToNotes(since: String? = nil, lookbackDays: Int? = nil) async -> (added: Int, skipped: Int, error: String?) {
         guard isConfigured else { return (0, 0, "Linear API key not configured") }
 
         do {
-            let issues = try await fetchCompletedIssues()
+            let issues = try await fetchCompletedIssues(since: since, lookbackDays: lookbackDays)
             let db = DatabaseManager.shared
             var added = 0
             var skipped = 0
@@ -110,13 +149,15 @@ final class LinearClient {
                     continue
                 }
 
-                let completedDate = String(issue.completedAt.prefix(10))
+                let completedDate = issue.completedDate.map(DatabaseManager.dayString(from:)) ?? String(issue.completedAt.prefix(10))
                 let content = "[Linear \(issue.identifier)] \(issue.title)"
                 let noteId = db.addNoteReturningId(date: completedDate, content: content)
+                guard noteId != -1 else { continue }
                 db.markIssueSynced(issue, noteId: noteId)
                 added += 1
             }
 
+            UserDefaults.standard.set(DatabaseManager.nowISO(), forKey: lastSuccessfulSyncKey)
             return (added, skipped, nil)
         } catch {
             return (0, 0, error.localizedDescription)
@@ -171,11 +212,17 @@ struct GraphQLError: Decodable {
 }
 
 struct IssuesData: Decodable {
-    let issues: IssuesNodes
+    let issues: IssuesConnection
 }
 
-struct IssuesNodes: Decodable {
+struct IssuesConnection: Decodable {
     let nodes: [IssueNode]
+    let pageInfo: GraphQLPageInfo
+}
+
+struct GraphQLPageInfo: Decodable {
+    let hasNextPage: Bool
+    let endCursor: String?
 }
 
 struct IssueNode: Decodable {

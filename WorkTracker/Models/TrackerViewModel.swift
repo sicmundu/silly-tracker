@@ -10,6 +10,13 @@ final class TrackerViewModel: ObservableObject {
     @Published var activeEntry: TrackerEntry?
     @Published var todayEntries: [TrackerEntry] = []
     @Published var todayNotes: [DayNote] = []
+    @Published var todaySummary: DaySummary?
+
+    @Published var selectedDate: Date = Date()
+    @Published var selectedEntries: [TrackerEntry] = []
+    @Published var selectedNotes: [DayNote] = []
+    @Published var selectedSummary: DaySummary?
+
     @Published var weekStats: [DayStats] = []
     @Published var elapsed: TimeInterval = 0
     @Published var elapsedFormatted: String = "00:00:00"
@@ -21,18 +28,12 @@ final class TrackerViewModel: ObservableObject {
     @Published var now = Date()
 
     // AI summary
-    @Published var todaySummary: DaySummary?
     @Published var isGeneratingSummary = false
 
     // Edit hours
     @Published var isEditingHours = false
     @Published var editingHoursValue: String = ""
     @Published var editingDate: String = ""
-
-    // Section collapse state
-    @Published var isLogCollapsed = false
-    @Published var isStatsCollapsed = false
-    @Published var isExportCollapsed = true
 
     // Stats period
     @Published var statsPeriod: StatsPeriod = .week
@@ -42,6 +43,7 @@ final class TrackerViewModel: ObservableObject {
     // MARK: - App Preferences
     @AppStorage("isMiniMode") var isMiniMode: Bool = false
     @AppStorage("dailyGoalHours") var dailyGoalHours: Double = 8.0
+    @AppStorage("syncInterval") private var syncIntervalSeconds: Double = 300
 
     // MARK: - Private
 
@@ -57,6 +59,11 @@ final class TrackerViewModel: ObservableObject {
         startTimers()
     }
 
+    deinit {
+        timer?.invalidate()
+        syncTimer?.invalidate()
+    }
+
     // MARK: - Timers
 
     private func startTimers() {
@@ -66,15 +73,19 @@ final class TrackerViewModel: ObservableObject {
             }
         }
 
-        let interval = UserDefaults.standard.double(forKey: "syncInterval")
-        let syncSec = interval > 0 ? interval : 300
-        syncTimer = Timer.scheduledTimer(withTimeInterval: syncSec, repeats: true) { [weak self] _ in
+        reloadSyncTimer()
+        Task { await linearSync(silent: true) }
+    }
+
+    func reloadSyncTimer() {
+        syncTimer?.invalidate()
+
+        let interval = syncIntervalSeconds > 0 ? syncIntervalSeconds : 300
+        syncTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.linearSync(silent: true)
             }
         }
-
-        Task { await linearSync(silent: true) }
     }
 
     private func tick() {
@@ -113,37 +124,60 @@ final class TrackerViewModel: ObservableObject {
         }
     }
 
-    func addNote(_ content: String) {
+    func addNote(_ content: String, on date: String? = nil) {
         guard !content.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        db.addNote(date: DatabaseManager.todayStr(), content: content)
+        db.addNote(date: date ?? selectedDateString, content: content)
         withAnimation(.easeOut(duration: 0.25)) {
-            refreshNotes()
+            refresh()
         }
     }
 
     func deleteNote(_ note: DayNote) {
         db.deleteNote(id: note.id)
         withAnimation(.easeOut(duration: 0.2)) {
-            refreshNotes()
+            refresh()
         }
+    }
+
+    func setSelectedDate(_ date: Date) {
+        selectedDate = Calendar.current.startOfDay(for: date)
+        withAnimation(.easeOut(duration: 0.2)) {
+            refreshSelectedDay()
+        }
+    }
+
+    func jumpToToday() {
+        setSelectedDate(Date())
     }
 
     // MARK: - Edit hours
 
     func beginEditHours(date: String, currentHours: Double) {
-        editingDate = date
-        let h = Int(currentHours)
-        let m = Int((currentHours - Double(h)) * 60)
-        editingHoursValue = "\(h):\(String(format: "%02d", m))"
-        isEditingHours = true
+        guard let restriction = db.workEditRestriction(for: date) else {
+            editingDate = date
+            let totalMinutes = Int((currentHours * 60).rounded())
+            let h = totalMinutes / 60
+            let m = totalMinutes % 60
+            editingHoursValue = "\(h):\(String(format: "%02d", m))"
+            isEditingHours = true
+            return
+        }
+
+        showToast(restriction)
     }
 
     func commitEditHours() {
         isEditingHours = false
+
+        guard db.workEditRestriction(for: editingDate) == nil else {
+            showToast("Work hours can't be edited for this day")
+            return
+        }
+
         let targetSeconds: Double
         if editingHoursValue.contains(":") {
             let parts = editingHoursValue.split(separator: ":")
-            let h = Double(parts[0]) ?? 0
+            let h = Double(parts.first ?? "0") ?? 0
             let m = parts.count > 1 ? (Double(parts[1]) ?? 0) : 0
             targetSeconds = h * 3600 + m * 60
         } else {
@@ -151,31 +185,42 @@ final class TrackerViewModel: ObservableObject {
             targetSeconds = h * 3600
         }
 
-        guard targetSeconds >= 0 else { return }
-        db.adjustWorkHours(date: editingDate, targetSeconds: targetSeconds)
-        withAnimation(.easeOut(duration: 0.3)) { refresh() }
+        guard targetSeconds >= 0 else {
+            showToast("Hours must be positive")
+            return
+        }
+
+        guard db.adjustWorkHours(date: editingDate, targetSeconds: targetSeconds) else {
+            showToast("Hours couldn't be updated")
+            return
+        }
+
+        withAnimation(.easeOut(duration: 0.3)) {
+            refresh()
+        }
         showToast("Hours updated")
     }
 
     // MARK: - AI Summary
 
-    func generateSummary() async {
+    func generateSummary(for date: Date? = nil) async {
         withAnimation { isGeneratingSummary = true }
-        let today = DatabaseManager.todayStr()
 
-        let totals = todayTotals
-        let stats: [String: Double] = [
-            "work": totals[.work] ?? 0,
-            "lunch": totals[.lunch] ?? 0,
-            "break": totals[.break] ?? 0
+        let targetDate = date ?? selectedDate
+        let dayString = Self.ymdFormatter.string(from: targetDate)
+        let stats = db.getStats(from: dayString, to: dayString).first ?? DayStats(date: dayString)
+        let notes = db.getNotes(for: dayString).map { ["content": $0.content, "created_at": $0.createdAt] }
+
+        let payload: [String: Double] = [
+            "work": stats.work,
+            "lunch": stats.lunch,
+            "break": stats.breakTime
         ]
 
-        let notes = todayNotes.map { ["content": $0.content, "created_at": $0.createdAt] }
-
         let (summary, error) = await AIClient.shared.generateSummary(
-            date: today,
+            date: dayString,
             notes: notes,
-            stats: stats
+            stats: payload
         )
 
         withAnimation(.easeOut(duration: 0.3)) {
@@ -183,9 +228,9 @@ final class TrackerViewModel: ObservableObject {
         }
 
         if let summary {
-            db.saveSummary(date: today, summary: summary)
+            db.saveSummary(date: dayString, summary: summary)
             withAnimation(.easeOut(duration: 0.3)) {
-                todaySummary = DaySummary(date: today, summary: summary, generatedAt: DatabaseManager.nowISO())
+                refresh()
             }
             showToast("Summary generated")
         } else if let error {
@@ -213,15 +258,18 @@ final class TrackerViewModel: ObservableObject {
             var csv = "date,hours,summary\n"
             var totalHours = 0.0
             for row in rows {
-                let h = Int(row.hours)
-                let m = Int((row.hours - Double(h)) * 60)
+                let totalMinutes = Int((row.hours * 60).rounded())
+                let h = totalMinutes / 60
+                let m = totalMinutes % 60
                 let hStr = "\(h):\(String(format: "%02d", m))"
                 let safeSummary = row.summary.replacingOccurrences(of: "\"", with: "\"\"")
                 csv += "\(row.date),\(hStr),\"\(safeSummary)\"\n"
                 totalHours += row.hours
             }
-            let th = Int(totalHours)
-            let tm = Int((totalHours - Double(th)) * 60)
+
+            let totalMinutes = Int((totalHours * 60).rounded())
+            let th = totalMinutes / 60
+            let tm = totalMinutes % 60
             csv += "TOTAL,\(th):\(String(format: "%02d", tm)),\n"
             return (Data(csv.utf8), fname + ".csv")
         }
@@ -229,14 +277,14 @@ final class TrackerViewModel: ObservableObject {
 
     // MARK: - Linear sync
 
-    func linearSync(silent: Bool = false) async {
+    func linearSync(silent: Bool = false, lookbackDays: Int? = nil) async {
         guard linear.isConfigured else {
             if !silent { showToast("Set Linear API key in Settings") }
             return
         }
 
         withAnimation { isSyncing = true }
-        let (added, _, error) = await linear.syncToNotes()
+        let (added, skipped, error) = await linear.syncToNotes(lookbackDays: lookbackDays)
         withAnimation { isSyncing = false }
 
         syncStatus = db.getSyncStatus()
@@ -244,13 +292,14 @@ final class TrackerViewModel: ObservableObject {
         if let error {
             syncStatus.lastError = error
             if !silent { showToast("Sync error: \(error)") }
-        } else {
-            if added > 0 {
-                withAnimation { refreshNotes() }
-                if !silent { showToast("Synced \(added) new tasks") }
-            } else if !silent {
-                showToast("Already up to date")
-            }
+            return
+        }
+
+        if added > 0 {
+            withAnimation { refresh() }
+            if !silent { showToast("Synced \(added) tasks") }
+        } else if !silent {
+            showToast(skipped > 0 ? "No new tasks" : "Nothing to sync")
         }
     }
 
@@ -258,52 +307,46 @@ final class TrackerViewModel: ObservableObject {
 
     func refresh() {
         activeEntry = db.getActive()
-        todayEntries = db.getTodayEntries()
-        refreshNotes()
+        refreshTodayData()
+        refreshSelectedDay()
         refreshStats()
-        refreshSummary()
+        syncStatus = db.getSyncStatus()
         tick()
     }
 
-    private func refreshNotes() {
-        todayNotes = db.getNotes(for: DatabaseManager.todayStr())
+    private func refreshTodayData() {
+        let today = DatabaseManager.todayStr()
+        todayEntries = db.getEntries(for: today)
+        todayNotes = db.getNotes(for: today)
+        todaySummary = db.getSummary(for: today)
+    }
+
+    private func refreshSelectedDay() {
+        if isViewingToday {
+            selectedEntries = todayEntries
+            selectedNotes = todayNotes
+            selectedSummary = todaySummary
+            return
+        }
+
+        selectedEntries = db.getEntries(for: selectedDateString)
+        selectedNotes = db.getNotes(for: selectedDateString)
+        selectedSummary = db.getSummary(for: selectedDateString)
     }
 
     private static let ymdFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
         return f
     }()
 
     func refreshStats() {
-        let today = Date()
-        let cal = Calendar.current
-
-        let startDate: Date
-        let endDate: Date
-
-        switch statsPeriod {
-        case .today:
-            startDate = today
-            endDate = today
-        case .week:
-            startDate = cal.date(byAdding: .day, value: -6, to: today)!
-            endDate = today
-        case .month:
-            startDate = cal.date(from: cal.dateComponents([.year, .month], from: today))!
-            endDate = today
-        case .year:
-            startDate = cal.date(from: cal.dateComponents([.year], from: today))!
-            endDate = today
-        case .all:
-            startDate = cal.date(from: DateComponents(year: 2000, month: 1, day: 1))!
-            endDate = today
-        case .custom:
-            startDate = customStatsStart
-            endDate = customStatsEnd
-        }
-
-        weekStats = db.getStats(from: Self.ymdFormatter.string(from: startDate), to: Self.ymdFormatter.string(from: endDate))
+        let range = statsRange
+        weekStats = db.getStats(
+            from: Self.ymdFormatter.string(from: range.start),
+            to: Self.ymdFormatter.string(from: range.end)
+        )
     }
 
     func setStatsPeriod(_ period: StatsPeriod) {
@@ -322,10 +365,6 @@ final class TrackerViewModel: ObservableObject {
         }
     }
 
-    private func refreshSummary() {
-        todaySummary = db.getSummary(for: DatabaseManager.todayStr())
-    }
-
     // MARK: - Toast
 
     private func showToast(_ msg: String) {
@@ -342,17 +381,28 @@ final class TrackerViewModel: ObservableObject {
 
     // MARK: - Computed
 
+    var selectedDateString: String {
+        Self.ymdFormatter.string(from: selectedDate)
+    }
+
+    var isViewingToday: Bool {
+        selectedDateString == DatabaseManager.todayStr()
+    }
+
     var todayTotals: [ActivityType: TimeInterval] {
-        var totals: [ActivityType: TimeInterval] = [:]
-        for entry in todayEntries {
-            let dur = entry.duration(now: now)
-            totals[entry.type, default: 0] += dur
-        }
-        return totals
+        totals(for: todayEntries)
+    }
+
+    var selectedDayTotals: [ActivityType: TimeInterval] {
+        totals(for: selectedEntries)
     }
 
     var todayWorkHours: Double {
         (todayTotals[.work] ?? 0) / 3600.0
+    }
+
+    var selectedDayWorkHours: Double {
+        (selectedDayTotals[.work] ?? 0) / 3600.0
     }
 
     var periodTotalWork: TimeInterval {
@@ -361,6 +411,57 @@ final class TrackerViewModel: ObservableObject {
 
     var periodTotalAll: TimeInterval {
         weekStats.reduce(0) { $0 + $1.total }
+    }
+
+    var periodAveragePerDay: TimeInterval {
+        periodTotalWork / Double(max(statsRangeDayCount, 1))
+    }
+
+    var periodGoalDelta: TimeInterval {
+        periodTotalWork - (Double(statsRangeDayCount) * dailyGoalHours * 3600)
+    }
+
+    var periodBestDay: DayStats? {
+        weekStats.max { $0.work < $1.work }
+    }
+
+    var periodCurrentStreak: Int {
+        let calendar = Calendar.current
+        let map = Dictionary(uniqueKeysWithValues: weekStats.map { ($0.date, $0.work) })
+        let range = statsRange
+        let start = calendar.startOfDay(for: range.start)
+        var cursor = calendar.startOfDay(for: range.end)
+        var streak = 0
+
+        while cursor >= start {
+            let key = Self.ymdFormatter.string(from: cursor)
+            guard (map[key] ?? 0) > 0 else { break }
+            streak += 1
+            guard let previous = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = previous
+        }
+
+        return streak
+    }
+
+    var noteReminderMessage: String? {
+        guard let active = activeEntry, active.type == .work else { return nil }
+        let threshold: TimeInterval = 45 * 60
+
+        let baseline: Date
+        if let lastNote = todayNotes.last,
+           let createdAt = DatabaseManager.parseDate(lastNote.createdAt) {
+            baseline = createdAt
+        } else {
+            baseline = active.startTime
+        }
+
+        guard now.timeIntervalSince(baseline) >= threshold else { return nil }
+        return "No note for 45m. Capture progress before it gets fuzzy."
+    }
+
+    func editHoursRestriction(for date: String) -> String? {
+        db.workEditRestriction(for: date)
     }
 
     private static let mmmdFormatter: DateFormatter = {
@@ -376,5 +477,40 @@ final class TrackerViewModel: ObservableObject {
         default:
             return statsPeriod.label
         }
+    }
+
+    private var statsRange: (start: Date, end: Date) {
+        let today = Date()
+        let cal = Calendar.current
+
+        switch statsPeriod {
+        case .today:
+            return (today, today)
+        case .week:
+            return (cal.date(byAdding: .day, value: -6, to: today) ?? today, today)
+        case .month:
+            return (cal.date(from: cal.dateComponents([.year, .month], from: today)) ?? today, today)
+        case .year:
+            return (cal.date(from: cal.dateComponents([.year], from: today)) ?? today, today)
+        case .all:
+            return (cal.date(from: DateComponents(year: 2000, month: 1, day: 1)) ?? today, today)
+        case .custom:
+            return (customStatsStart, customStatsEnd)
+        }
+    }
+
+    private var statsRangeDayCount: Int {
+        let cal = Calendar.current
+        let start = cal.startOfDay(for: statsRange.start)
+        let end = cal.startOfDay(for: statsRange.end)
+        return (cal.dateComponents([.day], from: start, to: end).day ?? 0) + 1
+    }
+
+    private func totals(for entries: [TrackerEntry]) -> [ActivityType: TimeInterval] {
+        var totals: [ActivityType: TimeInterval] = [:]
+        for entry in entries {
+            totals[entry.type, default: 0] += entry.duration(now: now)
+        }
+        return totals
     }
 }
