@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sicmundu/silly-tracker/releases/latest"><img src="https://img.shields.io/github/v/release/sicmundu/silly-tracker?style=flat-square&label=latest&color=2563eb" alt="Latest Release"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%2013%2B-333?style=flat-square&logo=apple" alt="macOS 13+">
-  <img src="https://img.shields.io/badge/swift-5.9%2B-f05138?style=flat-square&logo=swift&logoColor=white" alt="Swift">
+  <a href="https://github.com/sicmundu/silly-tracker/releases/latest"><img src="https://img.shields.io/github/v/release/sicmundu/silly-tracker?style=flat-square&amp;label=latest&amp;color=2563eb" alt="Latest Release"></a>
+  <img src="https://img.shields.io/badge/platform-macOS%2013%2B-333?style=flat-square&amp;logo=apple" alt="macOS 13+">
+  <img src="https://img.shields.io/badge/swift-5.9%2B-f05138?style=flat-square&amp;logo=swift&amp;logoColor=white" alt="Swift">
   <a href="https://github.com/sicmundu/silly-tracker/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
 </p>
 
