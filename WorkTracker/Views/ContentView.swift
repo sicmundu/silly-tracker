@@ -44,33 +44,14 @@ struct ContentView: View {
     @State private var selectedTab: Tab = .notes
 
     var body: some View {
-        VStack(spacing: 0) {
-            VStack(spacing: 0) {
-                topSection
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .padding(.bottom, 8)
+        VStack(spacing: DesignSystem.Layout.spacingMD) {
+            topSection
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
 
-                totalsStrip
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
-
-                Divider().overlay(Theme.border)
-
-                tabBar
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-
-                if selectedTab == .notes || selectedTab == .log {
-                    Divider().overlay(Theme.border)
-                    dayNavigator
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                }
-            }
-            Divider().overlay(Theme.border)
-
-            tabContent
+            contentSection
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 520, idealWidth: 580, minHeight: 600, idealHeight: 700)
@@ -98,17 +79,17 @@ struct ContentView: View {
                     Spacer()
 
                     HStack(spacing: DesignSystem.Layout.spacingXS) {
-                        Image(systemName: vm.todayWorkHours >= vm.dailyGoalHours ? "flag.checkered.circle.fill" : "scope")
+                        Image(systemName: contextWorkHours >= vm.dailyGoalHours ? "flag.checkered.circle.fill" : "scope")
                             .font(DesignSystem.Typography.captionBold)
-                        Text("\(vm.todayWorkHours, specifier: "%.1f") / \(vm.dailyGoalHours, specifier: "%.1f")h")
+                        Text("\(contextWorkHours, specifier: "%.1f") / \(vm.dailyGoalHours, specifier: "%.1f")h")
                             .font(DesignSystem.Typography.monoCaption)
                     }
-                    .foregroundStyle(vm.todayWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent)
+                    .foregroundStyle(contextWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent)
                     .padding(.horizontal, DesignSystem.Layout.spacingSM)
                     .padding(.vertical, 6)
                     .background(
                         Capsule()
-                            .fill((vm.todayWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent).opacity(0.10))
+                            .fill((contextWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent).opacity(0.10))
                     )
                 }
 
@@ -134,28 +115,9 @@ struct ContentView: View {
 
                 controlButtons
 
-                HStack(spacing: DesignSystem.Layout.spacingSM) {
-                    topMetricCard(
-                        title: "Goal Progress",
-                        value: "\(Int(goalProgress * 100))%",
-                        subtitle: String(format: "%.1fh tracked", vm.todayWorkHours),
-                        color: Theme.accent
-                    )
-                    topMetricCard(
-                        title: "Notes",
-                        value: "\(vm.todayNotes.count)",
-                        subtitle: vm.todayNotes.isEmpty ? "Nothing captured yet" : "Captured today",
-                        color: DesignSystem.Colors.breakTime
-                    )
-                    topMetricCard(
-                        title: "Review Day",
-                        value: vm.selectedDate.formatted(.dateTime.month(.abbreviated).day()),
-                        subtitle: vm.isViewingToday ? "Live context" : "Historical day",
-                        color: DesignSystem.Colors.warning
-                    )
-                }
+                heroSummaryStrip
 
-                if let reminder = vm.noteReminderMessage {
+                if vm.isViewingToday, let reminder = vm.noteReminderMessage {
                     HStack(spacing: DesignSystem.Layout.spacingSM) {
                         Image(systemName: "pencil.and.scribble")
                             .font(DesignSystem.Typography.captionBold)
@@ -183,6 +145,26 @@ struct ContentView: View {
                     )
                     .transition(.move(edge: .top).combined(with: .opacity))
                 }
+            }
+        }
+    }
+
+    private var contentSection: some View {
+        SectionCard {
+            VStack(spacing: 0) {
+                HStack(alignment: .center, spacing: DesignSystem.Layout.spacingMD) {
+                    tabBar
+
+                    Spacer(minLength: DesignSystem.Layout.spacingMD)
+
+                    contentContextBar
+                }
+                .padding(.bottom, DesignSystem.Layout.spacingMD)
+
+                Divider().overlay(Theme.border)
+
+                tabContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -335,28 +317,6 @@ struct ContentView: View {
         .onHover { hoveredButton = $0 ? key : nil }
     }
 
-    // MARK: - Totals Strip
-
-    private var totalsStrip: some View {
-        HStack(spacing: DesignSystem.Layout.spacingSM) {
-            ForEach(ActivityType.allCases) { type in
-                summaryTile(
-                    title: type.label,
-                    value: formatDur(vm.todayTotals[type] ?? 0),
-                    icon: type.icon,
-                    color: type.accentColor
-                )
-            }
-
-            summaryTile(
-                title: "Today",
-                value: vm.now.formatted(date: .abbreviated, time: .omitted),
-                icon: "calendar",
-                color: Theme.accent
-            )
-        }
-    }
-
     // MARK: - Tab Bar
 
     private var tabBar: some View {
@@ -374,47 +334,37 @@ struct ContentView: View {
                     }
                 )
             }
-            Spacer()
         }
     }
 
-    // MARK: - Day Navigator
+    @ViewBuilder
+    private var contentContextBar: some View {
+        if selectedTab == .notes || selectedTab == .log {
+            HStack(spacing: DesignSystem.Layout.spacingSM) {
+                dayNavButton(icon: "chevron.left") { shiftSelectedDay(by: -1) }
 
-    private var dayNavigator: some View {
-        HStack(spacing: DesignSystem.Layout.spacingSM) {
-            dayNavButton(icon: "chevron.left") { shiftSelectedDay(by: -1) }
+                DatePicker(
+                    "",
+                    selection: Binding(
+                        get: { vm.selectedDate },
+                        set: { vm.setSelectedDate($0) }
+                    ),
+                    displayedComponents: .date
+                )
+                .labelsHidden()
+                .datePickerStyle(.field)
+                .frame(width: 126)
 
-            DatePicker(
-                "",
-                selection: Binding(
-                    get: { vm.selectedDate },
-                    set: { vm.setSelectedDate($0) }
-                ),
-                displayedComponents: .date
-            )
-            .labelsHidden()
-            .datePickerStyle(.field)
-            .frame(maxWidth: 128)
+                dayNavButton(icon: "chevron.right", disabled: vm.isViewingToday) {
+                    shiftSelectedDay(by: 1)
+                }
 
-            dayNavButton(icon: "chevron.right", disabled: vm.isViewingToday) {
-                shiftSelectedDay(by: 1)
-            }
-
-            if !vm.isViewingToday {
-                SecondaryChip(title: "Today", icon: "arrow.uturn.backward.circle", isActive: false, activeColor: Theme.accent) {
-                    vm.jumpToToday()
+                if !vm.isViewingToday {
+                    SecondaryChip(title: "Today", icon: "arrow.uturn.backward.circle", isActive: false, activeColor: Theme.accent) {
+                        vm.jumpToToday()
+                    }
                 }
             }
-
-            Spacer()
-
-            HStack(spacing: DesignSystem.Layout.spacingXS) {
-                Image(systemName: "calendar")
-                    .font(DesignSystem.Typography.microBold)
-                Text(vm.selectedDate, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
-                    .font(DesignSystem.Typography.caption)
-            }
-            .foregroundStyle(Theme.dim)
         }
     }
 
@@ -434,95 +384,50 @@ struct ContentView: View {
 
     private var notesTab: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Text(vm.isViewingToday ? "Today" : "History")
-                    .font(DesignSystem.Typography.microBold)
-                    .tracking(1)
-                    .foregroundStyle(Theme.dim)
+            HStack(spacing: DesignSystem.Layout.spacingSM) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Notes")
+                        .font(DesignSystem.Typography.heading)
+                        .foregroundStyle(Theme.text)
 
-                Text("\(vm.selectedNotes.count) notes")
-                    .font(DesignSystem.Typography.micro)
-                    .foregroundStyle(Theme.dim)
+                    Text(vm.isViewingToday ? "\(vm.selectedNotes.count) notes captured today" : "\(vm.selectedNotes.count) notes for \(vm.selectedDate.formatted(date: .abbreviated, time: .omitted))")
+                        .font(DesignSystem.Typography.caption)
+                        .foregroundStyle(Theme.dim)
+                }
 
                 Spacer()
 
-                Button(action: {
-                    withAnimation { vm.isMiniMode = true }
-                }) {
-                    HStack(spacing: DesignSystem.Layout.spacingXS) {
-                        Image(systemName: "arrow.down.right.and.arrow.up.left")
-                            .font(DesignSystem.Typography.captionBold)
-                        Text("Mini")
-                            .font(DesignSystem.Typography.captionBold)
-                    }
-                    .foregroundStyle(Theme.dim)
-                    .padding(.horizontal, DesignSystem.Layout.spacingSM)
-                    .padding(.vertical, DesignSystem.Layout.spacingXS)
-                    .background(Theme.surface2)
-                    .clipShape(Capsule())
+                toolbarButton(
+                    title: vm.selectedSummary != nil ? "Redo AI" : "AI Summary",
+                    icon: vm.isGeneratingSummary ? nil : "sparkles",
+                    color: Theme.accent,
+                    showsProgress: vm.isGeneratingSummary,
+                    disabled: vm.isGeneratingSummary || vm.selectedNotes.isEmpty
+                ) {
+                    Task { await vm.generateSummary() }
                 }
-                .buttonStyle(.plain)
-                .help("Shrink to Mini Widget")
 
-                Button(action: { Task { await vm.generateSummary() } }) {
-                    HStack(spacing: DesignSystem.Layout.spacingXS) {
-                        if vm.isGeneratingSummary {
-                            ProgressView()
-                                .scaleEffect(0.35)
-                                .frame(width: 10, height: 10)
-                        } else {
-                            Image(systemName: "sparkles")
-                                .font(DesignSystem.Typography.captionBold)
-                        }
-                        Text(vm.selectedSummary != nil ? "Redo AI" : "AI Summary")
-                            .font(DesignSystem.Typography.captionBold)
+                Menu {
+                    Button("Enter Mini Mode") {
+                        withAnimation { vm.isMiniMode = true }
                     }
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, DesignSystem.Layout.spacingSM)
-                    .padding(.vertical, DesignSystem.Layout.spacingXS)
-                    .background(Theme.accent.opacity(0.1))
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.isGeneratingSummary || vm.selectedNotes.isEmpty)
-                .opacity(vm.selectedNotes.isEmpty ? 0.4 : 1)
 
-                Button(action: { Task { await vm.linearSync() } }) {
-                    HStack(spacing: DesignSystem.Layout.spacingXS) {
-                        if vm.isSyncing {
-                            ProgressView()
-                                .scaleEffect(0.35)
-                                .frame(width: 10, height: 10)
-                        } else {
-                            Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(DesignSystem.Typography.captionBold)
-                        }
-                        Text("Linear")
-                            .font(DesignSystem.Typography.captionBold)
+                    Button("Linear Sync") {
+                        Task { await vm.linearSync() }
                     }
-                    .foregroundStyle(Theme.accent)
-                    .padding(.horizontal, DesignSystem.Layout.spacingSM)
-                    .padding(.vertical, DesignSystem.Layout.spacingXS)
-                    .background(Theme.accent.opacity(0.1))
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(vm.isSyncing)
+                    .disabled(vm.isSyncing)
 
-                Button(action: { Task { await vm.linearSync(lookbackDays: linearResyncLookbackDays) } }) {
-                    Text("Resync \(linearResyncLookbackDays)d")
-                        .font(DesignSystem.Typography.captionBold)
-                        .foregroundStyle(DesignSystem.Colors.info)
-                        .padding(.horizontal, DesignSystem.Layout.spacingSM)
-                        .padding(.vertical, DesignSystem.Layout.spacingXS)
-                        .background(DesignSystem.Colors.info.opacity(0.08))
-                        .clipShape(Capsule())
+                    Button("Resync \(linearResyncLookbackDays)d") {
+                        Task { await vm.linearSync(lookbackDays: linearResyncLookbackDays) }
+                    }
+                    .disabled(vm.isSyncing)
+                } label: {
+                    toolbarMenuLabel(title: "Actions", icon: "ellipsis.circle", color: Theme.dim)
                 }
-                .buttonStyle(.plain)
-                .disabled(vm.isSyncing)
+                .menuStyle(.borderlessButton)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.vertical, 12)
 
             if let summary = vm.selectedSummary {
                 SectionCard {
@@ -1088,58 +993,83 @@ struct ContentView: View {
         .disabled(disabled)
     }
 
-    private func summaryTile(title: String, value: String, icon: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
-            HStack(spacing: DesignSystem.Layout.spacingXS) {
-                Image(systemName: icon)
-                    .font(DesignSystem.Typography.microBold)
-                    .foregroundStyle(color)
-                Text(title.uppercased())
-                    .font(DesignSystem.Typography.microBold)
-                    .foregroundStyle(Theme.dim)
-                    .tracking(0.8)
-            }
+    private var heroSummaryStrip: some View {
+        HStack(spacing: DesignSystem.Layout.spacingSM) {
+            heroSummaryItem(title: "Work", value: formatDur(contextTotals[.work] ?? 0), color: ActivityType.work.accentColor)
+            heroSummaryItem(title: "Lunch", value: formatDur(contextTotals[.lunch] ?? 0), color: ActivityType.lunch.accentColor)
+            heroSummaryItem(title: "Break", value: formatDur(contextTotals[.break] ?? 0), color: ActivityType.break.accentColor)
 
-            Text(value)
-                .font(title == "Today" ? DesignSystem.Typography.captionBold : DesignSystem.Typography.monoCaption)
-                .foregroundStyle(Theme.text)
+            Spacer(minLength: DesignSystem.Layout.spacingMD)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(contextNotesCount) note\(contextNotesCount == 1 ? "" : "s")")
+                    .font(DesignSystem.Typography.captionBold)
+                    .foregroundStyle(Theme.text)
+
+                Text(vm.isViewingToday ? "Live context" : vm.selectedDate.formatted(date: .abbreviated, time: .omitted))
+                    .font(DesignSystem.Typography.micro)
+                    .foregroundStyle(Theme.dim)
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, DesignSystem.Layout.spacingMD)
-        .padding(.vertical, DesignSystem.Layout.spacingSM)
-        .background(
-            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
-                .fill(color.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
-                .strokeBorder(color.opacity(0.14), lineWidth: 1)
-        )
     }
 
-    private func topMetricCard(title: String, value: String, subtitle: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
+    private func heroSummaryItem(title: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
             Text(title.uppercased())
                 .font(DesignSystem.Typography.microBold)
                 .tracking(0.8)
                 .foregroundStyle(Theme.dim)
+
             Text(value)
-                .font(DesignSystem.Typography.monoHeading)
+                .font(DesignSystem.Typography.monoCaption)
                 .foregroundStyle(color)
-            Text(subtitle)
-                .font(DesignSystem.Typography.caption)
-                .foregroundStyle(Theme.text.opacity(0.72))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(DesignSystem.Layout.spacingMD)
+        .padding(.horizontal, DesignSystem.Layout.spacingMD)
+        .padding(.vertical, DesignSystem.Layout.spacingSM)
         .background(
             RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
-                .fill(color.opacity(0.08))
+                .fill(color.opacity(0.06))
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
-                .strokeBorder(color.opacity(0.14), lineWidth: 1)
-        )
+    }
+
+    private func toolbarButton(title: String, icon: String?, color: Color, showsProgress: Bool = false, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: DesignSystem.Layout.spacingXS) {
+                if showsProgress {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(color)
+                } else if let icon {
+                    Image(systemName: icon)
+                        .font(DesignSystem.Typography.captionBold)
+                }
+
+                Text(title)
+                    .font(DesignSystem.Typography.captionBold)
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, DesignSystem.Layout.spacingSM)
+            .padding(.vertical, DesignSystem.Layout.spacingXS)
+            .background(color.opacity(0.10))
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.45 : 1)
+    }
+
+    private func toolbarMenuLabel(title: String, icon: String, color: Color) -> some View {
+        HStack(spacing: DesignSystem.Layout.spacingXS) {
+            Image(systemName: icon)
+                .font(DesignSystem.Typography.captionBold)
+            Text(title)
+                .font(DesignSystem.Typography.captionBold)
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, DesignSystem.Layout.spacingSM)
+        .padding(.vertical, DesignSystem.Layout.spacingXS)
+        .background(Theme.surface2)
+        .clipShape(Capsule())
     }
 
     private func quickNoteChip(_ title: String) -> some View {
@@ -1153,7 +1083,19 @@ struct ContentView: View {
     }
 
     private var goalProgress: Double {
-        min(1, max(0, vm.todayWorkHours / max(vm.dailyGoalHours, 0.1)))
+        min(1, max(0, contextWorkHours / max(vm.dailyGoalHours, 0.1)))
+    }
+
+    private var contextTotals: [ActivityType: TimeInterval] {
+        vm.isViewingToday ? vm.todayTotals : vm.selectedDayTotals
+    }
+
+    private var contextWorkHours: Double {
+        (contextTotals[.work] ?? 0) / 3600.0
+    }
+
+    private var contextNotesCount: Int {
+        vm.selectedNotes.count
     }
 
     private func formatDur(_ sec: TimeInterval) -> String {
