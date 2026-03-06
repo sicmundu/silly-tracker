@@ -123,7 +123,7 @@ Floats above all windows. Click ⊞ to expand back.
 
 ### Download (recommended)
 
-Grab the latest `.zip` from [**Releases**](https://github.com/sicmundu/silly-tracker/releases/latest), unzip, and drag `WorkTracker.app` to `/Applications`.
+Grab the latest `.zip` from [**Releases**](https://github.com/sicmundu/silly-tracker/releases/latest), unzip, and drag `SillyTrack.app` to `/Applications`.
 
 On first launch, macOS may ask you to allow it in **System Settings → Privacy & Security**.
 
@@ -142,7 +142,7 @@ xcodebuild -project WorkTracker.xcodeproj \
   build
 
 # Copy to Applications
-cp -R .build/xcode/Build/Products/Release/WorkTracker.app /Applications/
+cp -R .build/xcode/Build/Products/Release/SillyTrack.app /Applications/
 ```
 
 Requires **Xcode 15+** and **macOS 13+**.
@@ -170,7 +170,7 @@ SillyTrack works out of the box for basic time tracking. Integrations are option
 ## How it stores data
 
 ```
-~/Library/Application Support/WorkTracker/
+~/Library/Application Support/SillyTrack/
 └── tracker.db          ← single SQLite file, WAL mode
 ```
 
@@ -187,7 +187,7 @@ Time Machine backs up the DB automatically.
 ## Architecture
 
 ```
-WorkTrackerApp.swift          App entry + Sparkle controller
+SillyTrackApp.swift           App entry + Sparkle controller
 │
 ├── TrackerViewModel          @MainActor, 1-second tick, all state
 │   ├── DatabaseManager       SQLite3 C API, serial queue, WAL
@@ -221,7 +221,7 @@ Releases are built locally and published to GitHub:
 git add -A && git commit -m "release v1.3.0" && git push
 
 # 4. Create GitHub Release
-gh release create v1.3.0 .build/release/WorkTracker-1.3.0.zip --title 'v1.3.0'
+gh release create v1.3.0 .build/release/SillyTrack-1.3.0.zip --title 'v1.3.0'
 ```
 
 Users with the app installed get notified automatically.
@@ -236,7 +236,7 @@ The SillyTrack icon is a **playful mascot** — a slightly drowsy sloth wearing 
 
 The sloth represents the *ironic self-awareness* of the app: you're tracking your productivity, but you're not taking it too seriously. The headphones say "in the zone", the stopwatch says "I'm counting", and the sloth says "...eventually."
 
-> **For contributors:** the icon asset lives in `WorkTracker/Assets.xcassets/AppIcon.appiconset/`. Replace the contents with a 1024×1024 PNG to update.
+> **For contributors:** the icon asset lives in `WorkTracker/Assets.xcassets/AppIcon.appiconset/` (directory kept as `WorkTracker` for Xcode compatibility). Replace the contents with a 1024×1024 PNG to update.
 
 ---
 

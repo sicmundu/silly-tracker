@@ -50,7 +50,7 @@
 		B10017 /* SectionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionCard.swift; sourceTree = "<group>"; };
 		B10018 /* SectionHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionHeader.swift; sourceTree = "<group>"; };
 		B10019 /* StatPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatPill.swift; sourceTree = "<group>"; };
-		B10099 /* WorkTracker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WorkTracker.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10099 /* SillyTrack.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SillyTrack.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C8783F0F201A08DA74670F59 /* MiniWidgetView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MiniWidgetView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -123,7 +123,7 @@
 		D10006 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				B10099 /* WorkTracker.app */,
+				B10099 /* SillyTrack.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -169,8 +169,8 @@
 			packageProductDependencies = (
 				SPK00002 /* Sparkle */,
 			);
-			productName = WorkTracker;
-			productReference = B10099 /* WorkTracker.app */;
+			productName = SillyTrack;
+			productReference = B10099 /* SillyTrack.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -367,8 +367,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.worktracker.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sillytrack.app;
+				PRODUCT_NAME = SillyTrack;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -392,8 +392,8 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.2.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.worktracker.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.sillytrack.app;
+				PRODUCT_NAME = SillyTrack;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 			};

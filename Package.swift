@@ -7,11 +7,11 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(name: "WorkTrackerCore", targets: ["WorkTrackerCore"])
+        .library(name: "SillyTrackCore", targets: ["SillyTrackCore"])
     ],
     targets: [
         .target(
-            name: "WorkTrackerCore",
+    name: "SillyTrackCore",
             path: ".",
             exclude: [
                 ".beans",
@@ -38,8 +38,8 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "WorkTrackerCoreTests",
-            dependencies: ["WorkTrackerCore"],
+            name: "SillyTrackCoreTests",
+            dependencies: ["SillyTrackCore"],
             path: "Tests/WorkTrackerCoreTests",
             linkerSettings: [
                 .linkedLibrary("sqlite3")

@@ -271,7 +271,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Text("Stored in ~/Library/Application Support/WorkTracker. Backed up by Time Machine.")
+                Text("Stored in ~/Library/Application Support/SillyTrack. Backed up by Time Machine.")
                     .font(DesignSystem.Typography.micro)
                     .foregroundStyle(DesignSystem.Colors.textSecondary)
             }
@@ -313,7 +313,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
                 SectionHeader(
                     title: "About",
-                    subtitle: "WorkTracker v\(appVersion)"
+                    subtitle: "SillyTrack v\(appVersion)"
                 )
 
                 HStack(spacing: DesignSystem.Layout.spacingSM) {
@@ -399,8 +399,8 @@ struct SettingsView: View {
 
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "WorkTracker-backup.json"
-        panel.title = "Export WorkTracker Data"
+        panel.nameFieldStringValue = "SillyTrack-backup.json"
+        panel.title = "Export SillyTrack Data"
 
         if panel.runModal() == .OK, let url = panel.url {
             try? data.write(to: url)
@@ -411,7 +411,7 @@ struct SettingsView: View {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
-        panel.title = "Import WorkTracker Data"
+        panel.title = "Import SillyTrack Data"
 
         if panel.runModal() == .OK, let url = panel.url {
             if let data = try? Data(contentsOf: url) {

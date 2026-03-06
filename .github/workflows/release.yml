@@ -51,8 +51,8 @@ jobs:
         run: |
           mkdir -p .build/release
           ditto -c -k --keepParent \
-            .build/xcode/Build/Products/Release/WorkTracker.app \
-            .build/release/WorkTracker-${{ steps.version.outputs.VERSION }}.zip
+            .build/xcode/Build/Products/Release/SillyTrack.app \
+            .build/release/SillyTrack-${{ steps.version.outputs.VERSION }}.zip
 
       - name: Sign and generate appcast entry
         id: sign
@@ -60,7 +60,7 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           SPARKLE_BIN=".build/xcode/SourcePackages/artifacts/sparkle/Sparkle/bin"
-          ZIP=".build/release/WorkTracker-${{ steps.version.outputs.VERSION }}.zip"
+          ZIP=".build/release/SillyTrack-${{ steps.version.outputs.VERSION }}.zip"
           VERSION="${{ steps.version.outputs.VERSION }}"
           BUILD="${{ steps.version.outputs.BUILD }}"
 
@@ -71,7 +71,7 @@ jobs:
           ED_SIG=$(echo "$SIGNATURE" | grep -o 'sparkle:edSignature="[^"]*"' | cut -d'"' -f2)
           LENGTH=$(stat -f%z "$ZIP")
           PUB_DATE=$(date -u +"%a, %d %b %Y %H:%M:%S %z")
-          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/WorkTracker-${VERSION}.zip"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/SillyTrack-${VERSION}.zip"
 
           python3 -c "
           print('''        <item>
@@ -114,6 +114,6 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.VERSION }}"
           gh release create "v${VERSION}" \
-            ".build/release/WorkTracker-${VERSION}.zip" \
+            ".build/release/SillyTrack-${VERSION}.zip" \
             --title "v${VERSION}" \
             --generate-notes

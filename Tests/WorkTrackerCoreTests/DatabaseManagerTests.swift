@@ -1,6 +1,6 @@
 import XCTest
 import SQLite3
-@testable import WorkTrackerCore
+@testable import SillyTrackCore
 
 final class DatabaseManagerTests: XCTestCase {
     private var dbURL: URL!

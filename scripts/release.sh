@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# WorkTracker Release Script
+# SillyTrack Release Script
 # Usage: ./scripts/release.sh <version> <build_number>
 # Example: ./scripts/release.sh 1.2.0 3
 
@@ -21,7 +21,7 @@ if [ -z "$VERSION" ] || [ -z "$BUILD_NUM" ]; then
     exit 1
 fi
 
-echo "==> Building WorkTracker v$VERSION (build $BUILD_NUM) Release..."
+echo "==> Building SillyTrack v$VERSION (build $BUILD_NUM) Release..."
 cd "$PROJECT_DIR"
 
 xcodebuild -project WorkTracker.xcodeproj \
@@ -36,8 +36,8 @@ echo "==> Creating release archive..."
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-APP_PATH=".build/xcode/Build/Products/Release/WorkTracker.app"
-ZIP_NAME="WorkTracker-${VERSION}.zip"
+APP_PATH=".build/xcode/Build/Products/Release/SillyTrack.app"
+ZIP_NAME="SillyTrack-${VERSION}.zip"
 ZIP_PATH="$BUILD_DIR/$ZIP_NAME"
 
 ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"

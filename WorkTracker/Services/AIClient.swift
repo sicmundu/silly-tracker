@@ -120,7 +120,7 @@ final class AIClient {
     private func readEnvToken() -> String? {
         // Try common locations for .env
         let paths = [
-            NSHomeDirectory() + "/Documents/WorkTracker/.env",
+            NSHomeDirectory() + "/Documents/SillyTrack/.env",
             FileManager.default.currentDirectoryPath + "/.env"
         ]
 

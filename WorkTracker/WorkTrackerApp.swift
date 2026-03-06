@@ -2,7 +2,7 @@ import SwiftUI
 import Sparkle
 
 @main
-struct WorkTrackerApp: App {
+struct SillyTrackApp: App {
     @StateObject private var vm = TrackerViewModel()
     private let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 

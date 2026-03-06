@@ -20,7 +20,7 @@ final class DatabaseManager {
 
     private static let defaultDir: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("WorkTracker")
+            .appendingPathComponent("SillyTrack")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
@@ -33,32 +33,44 @@ final class DatabaseManager {
         Self.defaultDbPath
     }
 
-    /// Migrate DB from old ~/Documents/WorkTracker location to Application Support.
+    /// Migrate DB from old locations to the current Application Support/SillyTrack directory.
+    /// Checks: 1) ~/Library/Application Support/WorkTracker (previous rename)
+    ///          2) ~/Documents/WorkTracker (original location)
     /// Called once on first launch after the update.
     private func migrateFromDocumentsIfNeeded() {
         let fm = FileManager.default
-        let oldDir = fm.urls(for: .documentDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("WorkTracker")
-        let oldDb = oldDir.appendingPathComponent("tracker.db")
         let newDb = URL(fileURLWithPath: Self.defaultDbPath)
 
-        // Only migrate if old DB exists and new one does not
-        guard fm.fileExists(atPath: oldDb.path),
-              !fm.fileExists(atPath: newDb.path) else { return }
+        // Don't migrate if we already have a DB in the new location
+        guard !fm.fileExists(atPath: newDb.path) else { return }
 
-        do {
-            try fm.copyItem(at: oldDb, to: newDb)
-            // Also move WAL/SHM if present
-            for ext in ["-wal", "-shm"] {
-                let oldFile = oldDir.appendingPathComponent("tracker.db\(ext)")
-                let newFile = Self.defaultDir.appendingPathComponent("tracker.db\(ext)")
-                if fm.fileExists(atPath: oldFile.path) {
-                    try? fm.copyItem(at: oldFile, to: newFile)
+        // Try old locations in priority order
+        let oldDirs = [
+            fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+                .appendingPathComponent("WorkTracker"),
+            fm.urls(for: .documentDirectory, in: .userDomainMask).first!
+                .appendingPathComponent("WorkTracker")
+        ]
+
+        for oldDir in oldDirs {
+            let oldDb = oldDir.appendingPathComponent("tracker.db")
+            guard fm.fileExists(atPath: oldDb.path) else { continue }
+
+            do {
+                try fm.copyItem(at: oldDb, to: newDb)
+                // Also move WAL/SHM if present
+                for ext in ["-wal", "-shm"] {
+                    let oldFile = oldDir.appendingPathComponent("tracker.db\(ext)")
+                    let newFile = Self.defaultDir.appendingPathComponent("tracker.db\(ext)")
+                    if fm.fileExists(atPath: oldFile.path) {
+                        try? fm.copyItem(at: oldFile, to: newFile)
+                    }
                 }
+                print("Migrated DB from \(oldDb.path) to \(newDb.path)")
+                return
+            } catch {
+                print("DB migration from \(oldDb.path) failed: \(error)")
             }
-            print("Migrated DB from \(oldDb.path) to \(newDb.path)")
-        } catch {
-            print("DB migration failed: \(error)")
         }
     }
 

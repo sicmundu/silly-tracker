@@ -1,9 +1,9 @@
 <?xml version="1.0" standalone="yes"?>
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/" version="2.0">
     <channel>
-        <title>WorkTracker</title>
+        <title>SillyTrack</title>
         <link>https://github.com/sicmundu/silly-tracker</link>
-        <description>WorkTracker updates</description>
+        <description>SillyTrack updates</description>
         <language>en</language>
         <item>
             <title>Version 1.2.0</title>
@@ -12,7 +12,7 @@
             <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <enclosure
-                url="https://github.com/sicmundu/silly-tracker/releases/download/v1.2.0/WorkTracker-1.2.0.zip"
+                url="https://github.com/sicmundu/silly-tracker/releases/download/v1.2.0/SillyTrack-1.2.0.zip"
                 length="1590158"
                 type="application/octet-stream"
                 sparkle:edSignature="gi5AwYtKloZ7ZIQUJ6x2+MPCPhwBpIhhMYaBH9NwsDSE7/WdO8g+jB+DLSVa4+5qK9Q3+RJjpDkbOKd40b47Cg=="
@@ -25,7 +25,7 @@
             <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <enclosure
-                url="https://github.com/sicmundu/silly-tracker/releases/download/v1.1.0/WorkTracker-1.1.0.zip"
+                url="https://github.com/sicmundu/silly-tracker/releases/download/v1.1.0/SillyTrack-1.1.0.zip"
                 length="1576018"
                 type="application/octet-stream"
                 sparkle:edSignature="ZDKW++3KBGTQkZg8/GhFQjNKUTxFL2qcGwr8jPoXHW4+hfPruZIh9+7l/AuxEK5Zyd/CCu9MB64l9yE008reCQ=="
