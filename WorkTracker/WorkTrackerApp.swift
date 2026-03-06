@@ -42,7 +42,7 @@ struct WorkTrackerApp: App {
 
         // Settings
         Settings {
-            SettingsView()
+            SettingsView(vm: vm)
         }
     }
 

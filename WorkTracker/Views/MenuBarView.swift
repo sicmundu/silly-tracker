@@ -87,7 +87,7 @@ struct MenuBarView: View {
             // Bottom actions
             VStack(spacing: 2) {
                 menuAction(id: "ai", icon: "sparkles", label: "AI Summary", color: .purple) {
-                    Task { await vm.generateSummary() }
+                    Task { await vm.generateSummary(for: Date()) }
                 }
                 .disabled(vm.isGeneratingSummary || vm.todayNotes.isEmpty)
                 .opacity(vm.todayNotes.isEmpty ? 0.4 : 1)

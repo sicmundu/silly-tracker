@@ -4,26 +4,28 @@ import UniformTypeIdentifiers
 // MARK: - Theme
 
 private enum Theme {
-    static let bg       = Color.clear
-    static let surface  = Color(nsColor: .controlBackgroundColor)
+    static let bg = Color.clear
+    static let surface = Color(nsColor: .controlBackgroundColor)
     static let surface2 = Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
-    static let border   = Color.primary.opacity(0.1)
-    static let text     = Color.primary
-    static let dim      = Color.secondary
-    static let accent   = Color.accentColor
-    static let stop     = Color.red
+    static let border = Color.primary.opacity(0.1)
+    static let text = Color.primary
+    static let dim = Color.secondary
+    static let accent = Color.accentColor
+    static let stop = Color.red
 }
 
 // MARK: - Tab
 
 private enum Tab: String, CaseIterable {
     case notes, log, stats, export
+
     var label: String { rawValue.capitalized }
+
     var icon: String {
         switch self {
-        case .notes:  return "note.text"
-        case .log:    return "list.bullet"
-        case .stats:  return "chart.bar"
+        case .notes: return "note.text"
+        case .log: return "list.bullet"
+        case .stats: return "chart.bar"
         case .export: return "square.and.arrow.up"
         }
     }
@@ -33,6 +35,9 @@ private enum Tab: String, CaseIterable {
 
 struct ContentView: View {
     @ObservedObject var vm: TrackerViewModel
+
+    @AppStorage("linearResyncLookbackDays") private var linearResyncLookbackDays = 30
+
     @State private var noteText = ""
     @State private var exportPeriod = "week"
     @State private var hoveredButton: String?
@@ -40,50 +45,48 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top: timer + controls (fixed)
             topSection
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
 
-            // Activity totals strip
             totalsStrip
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
 
             Divider().overlay(Theme.border)
 
-            // Tab bar
             tabBar
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
 
+            if selectedTab == .notes || selectedTab == .log {
+                Divider().overlay(Theme.border)
+                dayNavigator
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+            }
+
             Divider().overlay(Theme.border)
 
-            // Tab content (fills remaining space)
             tabContent
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(minWidth: 480, idealWidth: 540, minHeight: 560, idealHeight: 640)
+        .frame(minWidth: 520, idealWidth: 580, minHeight: 600, idealHeight: 700)
         .background(.regularMaterial)
         .overlay(alignment: .top) { toastOverlay }
         .sheet(isPresented: $vm.isEditingHours) { editHoursSheet }
     }
 
-    // MARK: - Top Section (timer + controls)
+    // MARK: - Top Section
 
     private var topSection: some View {
         VStack(spacing: 10) {
-            // Row: clock + status + elapsed
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 Text(timeString)
                     .font(.system(size: 42, weight: .heavy, design: .monospaced))
                     .monospacedDigit()
-                    .foregroundStyle(
-                        vm.activeEntry != nil
-                            ? vm.activeEntry!.type.accentColor
-                            : Theme.text
-                    )
+                    .foregroundStyle(vm.activeEntry?.type.accentColor ?? Theme.text)
                     .contentTransition(.numericText(countsDown: false))
                     .animation(.easeInOut(duration: 0.15), value: timeString)
 
@@ -129,8 +132,36 @@ struct ContentView: View {
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vm.activeEntry?.id)
 
-            // Controls
             controlButtons
+
+            if let reminder = vm.noteReminderMessage {
+                HStack(spacing: 8) {
+                    Image(systemName: "pencil.and.scribble")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text(reminder)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.text.opacity(0.85))
+                    Spacer()
+                    Button("Add note") {
+                        selectedTab = .notes
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.orange)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.orange.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.orange.opacity(0.2), lineWidth: 1)
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
         }
     }
 
@@ -149,7 +180,6 @@ struct ContentView: View {
     private var controlButtons: some View {
         HStack(spacing: 6) {
             if let active = vm.activeEntry {
-                // Stop
                 compactButton(
                     key: "stop",
                     icon: "stop.fill",
@@ -160,7 +190,6 @@ struct ContentView: View {
                 ) { vm.stopActivity() }
                 .keyboardShortcut(.space, modifiers: [])
 
-                // Switch to other types
                 ForEach(ActivityType.allCases) { type in
                     if type != active.type {
                         compactButton(
@@ -223,7 +252,13 @@ struct ContentView: View {
                 }
                 .foregroundStyle(total > 0 ? type.accentColor : Theme.dim.opacity(0.5))
             }
+
             Spacer()
+
+            Text("Live today")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Theme.dim.opacity(0.85))
+
             Text(vm.now, style: .date)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.dim)
@@ -237,7 +272,9 @@ struct ContentView: View {
             ForEach(Tab.allCases, id: \.self) { tab in
                 let active = selectedTab == tab
                 Button(action: {
-                    withAnimation(.easeOut(duration: 0.15)) { selectedTab = tab }
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        selectedTab = tab
+                    }
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: tab.icon)
@@ -259,14 +296,61 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Day Navigator
+
+    private var dayNavigator: some View {
+        HStack(spacing: 8) {
+            Button(action: { shiftSelectedDay(by: -1) }) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .buttonStyle(.plain)
+
+            DatePicker(
+                "",
+                selection: Binding(
+                    get: { vm.selectedDate },
+                    set: { vm.setSelectedDate($0) }
+                ),
+                displayedComponents: .date
+            )
+            .labelsHidden()
+            .datePickerStyle(.field)
+            .frame(maxWidth: 128)
+
+            Button(action: { shiftSelectedDay(by: 1) }) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.isViewingToday)
+            .opacity(vm.isViewingToday ? 0.4 : 1)
+
+            if !vm.isViewingToday {
+                Button("Today") {
+                    vm.jumpToToday()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+            }
+
+            Spacer()
+
+            Text(vm.selectedDate, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day())
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Theme.dim)
+        }
+    }
+
     // MARK: - Tab Content
 
     @ViewBuilder
     private var tabContent: some View {
         switch selectedTab {
-        case .notes:  notesTab
-        case .log:    logTab
-        case .stats:  statsTab
+        case .notes: notesTab
+        case .log: logTab
+        case .stats: statsTab
         case .export: exportTab
         }
     }
@@ -275,16 +359,18 @@ struct ContentView: View {
 
     private var notesTab: some View {
         VStack(spacing: 0) {
-            // Header row
-            HStack {
-                if !vm.todayNotes.isEmpty {
-                    Text("\(vm.todayNotes.count) notes")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(Theme.dim)
-                }
+            HStack(spacing: 8) {
+                Text(vm.isViewingToday ? "Today" : "History")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .tracking(1)
+                    .foregroundStyle(Theme.dim)
+
+                Text("\(vm.selectedNotes.count) notes")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Theme.dim)
+
                 Spacer()
 
-                // Mini Mode Button
                 Button(action: {
                     withAnimation { vm.isMiniMode = true }
                 }) {
@@ -303,15 +389,17 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .help("Shrink to Mini Widget")
 
-                // AI Summary button
                 Button(action: { Task { await vm.generateSummary() } }) {
                     HStack(spacing: 3) {
                         if vm.isGeneratingSummary {
-                            ProgressView().scaleEffect(0.35).frame(width: 10, height: 10)
+                            ProgressView()
+                                .scaleEffect(0.35)
+                                .frame(width: 10, height: 10)
                         } else {
-                            Image(systemName: "sparkles").font(.system(size: 9))
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 9))
                         }
-                        Text(vm.todaySummary != nil ? "Redo AI" : "AI Summary")
+                        Text(vm.selectedSummary != nil ? "Redo AI" : "AI Summary")
                             .font(.system(size: 10, weight: .semibold))
                     }
                     .foregroundStyle(Theme.accent)
@@ -321,17 +409,21 @@ struct ContentView: View {
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .disabled(vm.isGeneratingSummary || vm.todayNotes.isEmpty)
-                .opacity(vm.todayNotes.isEmpty ? 0.4 : 1)
+                .disabled(vm.isGeneratingSummary || vm.selectedNotes.isEmpty)
+                .opacity(vm.selectedNotes.isEmpty ? 0.4 : 1)
 
                 Button(action: { Task { await vm.linearSync() } }) {
                     HStack(spacing: 3) {
                         if vm.isSyncing {
-                            ProgressView().scaleEffect(0.35).frame(width: 10, height: 10)
+                            ProgressView()
+                                .scaleEffect(0.35)
+                                .frame(width: 10, height: 10)
                         } else {
-                            Image(systemName: "arrow.triangle.2.circlepath").font(.system(size: 9))
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 9))
                         }
-                        Text("Linear").font(.system(size: 10, weight: .semibold))
+                        Text("Linear")
+                            .font(.system(size: 10, weight: .semibold))
                     }
                     .foregroundStyle(Theme.accent)
                     .padding(.horizontal, 8)
@@ -341,20 +433,36 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(vm.isSyncing)
+
+                Button(action: { Task { await vm.linearSync(lookbackDays: linearResyncLookbackDays) } }) {
+                    Text("Resync \(linearResyncLookbackDays)d")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.blue)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.blue.opacity(0.08))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.isSyncing)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
-            // AI summary (if present)
-            if let summary = vm.todaySummary {
-                HStack(spacing: 6) {
+            if let summary = vm.selectedSummary {
+                HStack(alignment: .top, spacing: 8) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 9))
                         .foregroundStyle(Theme.accent)
-                    Text(summary.summary)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.text.opacity(0.85))
-                        .lineLimit(3)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(summary.summary)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Theme.text.opacity(0.85))
+                        Text("Generated \(summary.generatedAt)")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Theme.dim)
+                    }
+                    Spacer()
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
@@ -365,14 +473,13 @@ struct ContentView: View {
 
             Divider().overlay(Theme.border)
 
-            // Notes list
-            if vm.todayNotes.isEmpty {
+            if vm.selectedNotes.isEmpty {
                 Spacer()
                 VStack(spacing: 8) {
                     Image(systemName: "note.text")
                         .font(.system(size: 24))
                         .foregroundStyle(Theme.dim.opacity(0.4))
-                    Text("No notes yet")
+                    Text(vm.isViewingToday ? "No notes yet" : "No notes for this day")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.dim)
                 }
@@ -380,9 +487,9 @@ struct ContentView: View {
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(spacing: 0) {
-                        ForEach(vm.todayNotes) { note in
+                        ForEach(vm.selectedNotes) { note in
                             noteRow(note)
-                            if note.id != vm.todayNotes.last?.id {
+                            if note.id != vm.selectedNotes.last?.id {
                                 Divider().overlay(Theme.border).padding(.leading, 50)
                             }
                         }
@@ -392,13 +499,12 @@ struct ContentView: View {
 
             Divider().overlay(Theme.border)
 
-            // Input
             HStack(spacing: 8) {
                 Image(systemName: "plus.circle.fill")
                     .font(.system(size: 13))
                     .foregroundStyle(noteText.isEmpty ? Theme.dim : Theme.accent)
 
-                TextField("What did you work on?", text: $noteText)
+                TextField(notePlaceholder, text: $noteText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.text)
@@ -422,7 +528,11 @@ struct ContentView: View {
             .padding(.vertical, 10)
             .animation(.easeOut(duration: 0.15), value: noteText.isEmpty)
         }
-        .animation(.easeOut(duration: 0.2), value: vm.todaySummary?.summary)
+        .animation(.easeOut(duration: 0.2), value: vm.selectedSummary?.summary)
+    }
+
+    private var notePlaceholder: String {
+        vm.isViewingToday ? "What did you work on?" : "Add a retrospective note for this day"
     }
 
     private func noteRow(_ note: DayNote) -> some View {
@@ -472,25 +582,24 @@ struct ContentView: View {
 
     private var logTab: some View {
         VStack(spacing: 0) {
-            if vm.todayEntries.isEmpty {
+            if vm.selectedEntries.isEmpty {
                 Spacer()
                 VStack(spacing: 8) {
                     Image(systemName: "list.bullet")
                         .font(.system(size: 24))
                         .foregroundStyle(Theme.dim.opacity(0.4))
-                    Text("No entries yet")
+                    Text(vm.isViewingToday ? "No entries yet" : "No entries for this day")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.dim)
                 }
                 Spacer()
             } else {
-                // Header
                 HStack {
                     Text("Type").frame(width: 65, alignment: .leading)
-                    Text("Start").frame(width: 55)
-                    Text("End").frame(width: 55)
+                    Text("Start").frame(width: 60)
+                    Text("End").frame(width: 60)
                     Spacer()
-                    Text("Duration").frame(width: 65, alignment: .trailing)
+                    Text("Duration").frame(width: 72, alignment: .trailing)
                 }
                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                 .foregroundStyle(Theme.dim.opacity(0.6))
@@ -503,7 +612,7 @@ struct ContentView: View {
 
                 ScrollView(.vertical, showsIndicators: false) {
                     LazyVStack(spacing: 0) {
-                        ForEach(vm.todayEntries) { entry in
+                        ForEach(vm.selectedEntries) { entry in
                             HStack {
                                 HStack(spacing: 4) {
                                     Circle()
@@ -516,17 +625,17 @@ struct ContentView: View {
 
                                 Text(entry.startTime.formatted(date: .omitted, time: .shortened))
                                     .foregroundStyle(Theme.text.opacity(0.6))
-                                    .frame(width: 55)
+                                    .frame(width: 60)
 
                                 if let end = entry.endTime {
                                     Text(end.formatted(date: .omitted, time: .shortened))
                                         .foregroundStyle(Theme.text.opacity(0.6))
-                                        .frame(width: 55)
+                                        .frame(width: 60)
                                 } else {
                                     Text("now")
                                         .foregroundStyle(entry.type.accentColor)
                                         .fontWeight(.bold)
-                                        .frame(width: 55)
+                                        .frame(width: 60)
                                 }
 
                                 Spacer()
@@ -534,7 +643,7 @@ struct ContentView: View {
                                 Text(entry.formattedDuration(now: vm.now))
                                     .foregroundStyle(Theme.text)
                                     .fontWeight(.semibold)
-                                    .frame(width: 65, alignment: .trailing)
+                                    .frame(width: 72, alignment: .trailing)
                             }
                             .font(.system(size: 11, design: .monospaced))
                             .padding(.horizontal, 16)
@@ -545,12 +654,12 @@ struct ContentView: View {
 
                 Divider().overlay(Theme.border)
 
-                // Totals
                 HStack(spacing: 14) {
                     ForEach(ActivityType.allCases) { type in
-                        if let total = vm.todayTotals[type], total > 0 {
+                        if let total = vm.selectedDayTotals[type], total > 0 {
                             HStack(spacing: 3) {
-                                Image(systemName: type.icon).font(.system(size: 8))
+                                Image(systemName: type.icon)
+                                    .font(.system(size: 8))
                                 Text(formatDur(total))
                                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                             }
@@ -569,7 +678,6 @@ struct ContentView: View {
 
     private var statsTab: some View {
         VStack(spacing: 0) {
-            // Period picker
             HStack(spacing: 3) {
                 ForEach(StatsPeriod.allCases) { period in
                     periodButton(period)
@@ -579,7 +687,6 @@ struct ContentView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
 
-            // Custom range
             if vm.statsPeriod == .custom {
                 HStack(spacing: 8) {
                     DatePicker("", selection: $vm.customStatsStart, displayedComponents: .date)
@@ -589,9 +696,11 @@ struct ContentView: View {
                         .onChange(of: vm.customStatsStart) { _ in
                             vm.setCustomRange(start: vm.customStatsStart, end: vm.customStatsEnd)
                         }
+
                     Image(systemName: "arrow.right")
                         .font(.system(size: 9))
                         .foregroundStyle(Theme.dim)
+
                     DatePicker("", selection: $vm.customStatsEnd, displayedComponents: .date)
                         .labelsHidden()
                         .datePickerStyle(.field)
@@ -605,6 +714,10 @@ struct ContentView: View {
                 .padding(.bottom, 6)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+
+            statsInsights
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
 
             Divider().overlay(Theme.border)
 
@@ -625,13 +738,14 @@ struct ContentView: View {
 
                     LazyVStack(spacing: 1) {
                         ForEach(vm.weekStats) { day in
+                            let restriction = vm.editHoursRestriction(for: day.date)
+
                             HStack(spacing: 8) {
                                 Text(day.shortDate)
                                     .font(.system(size: 10, weight: .medium, design: .rounded))
                                     .foregroundStyle(Theme.dim)
                                     .frame(width: 42, alignment: .leading)
 
-                                // Stacked bar
                                 GeometryReader { geo in
                                     HStack(spacing: 1) {
                                         if day.work > 0 {
@@ -661,8 +775,10 @@ struct ContentView: View {
                                         .foregroundStyle(ActivityType.work.accentColor)
                                 }
                                 .buttonStyle(.plain)
-                                .frame(width: 36, alignment: .trailing)
-                                .help("Click to edit")
+                                .disabled(restriction != nil)
+                                .opacity(restriction == nil ? 1 : 0.4)
+                                .frame(width: 44, alignment: .trailing)
+                                .help(restriction ?? "Click to edit")
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 3)
@@ -672,36 +788,20 @@ struct ContentView: View {
 
                 Divider().overlay(Theme.border)
 
-                // Summary row
                 HStack(spacing: 14) {
-                    HStack(spacing: 3) {
-                        Text("Total:")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(Theme.dim)
-                        Text(formatDur(vm.periodTotalWork))
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundStyle(ActivityType.work.accentColor)
-                    }
-
-                    if vm.weekStats.count > 1 {
-                        HStack(spacing: 3) {
-                            Text("Avg:")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Theme.dim)
-                            Text(formatDur(vm.periodTotalWork / Double(vm.weekStats.count)))
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(Theme.accent)
-                        }
-                    }
+                    statFoot(label: "Total", value: formatDur(vm.periodTotalWork), color: ActivityType.work.accentColor)
+                    statFoot(label: "Avg", value: formatDur(vm.periodAveragePerDay), color: Theme.accent)
+                    statFoot(label: "Streak", value: "\(vm.periodCurrentStreak)d", color: .orange)
+                    statFoot(label: "Goal", value: signedDuration(vm.periodGoalDelta), color: vm.periodGoalDelta >= 0 ? .green : .red)
 
                     Spacer()
 
-                    // Legend
                     HStack(spacing: 8) {
                         ForEach(ActivityType.allCases) { type in
                             HStack(spacing: 3) {
                                 Circle().fill(type.accentColor).frame(width: 5, height: 5)
-                                Text(type.label).font(.system(size: 9, weight: .medium))
+                                Text(type.label)
+                                    .font(.system(size: 9, weight: .medium))
                             }
                         }
                     }
@@ -712,6 +812,49 @@ struct ContentView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: vm.statsPeriod)
+    }
+
+    private var statsInsights: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                insightPill(label: "Range", value: vm.statsPeriodLabel, color: Theme.dim)
+                insightPill(label: "Avg/day", value: formatDur(vm.periodAveragePerDay), color: Theme.accent)
+                insightPill(label: "Streak", value: "\(vm.periodCurrentStreak) days", color: .orange)
+                insightPill(label: "Goal delta", value: signedDuration(vm.periodGoalDelta), color: vm.periodGoalDelta >= 0 ? .green : .red)
+                if let best = vm.periodBestDay {
+                    insightPill(label: "Best day", value: "\(best.shortDate) \(best.formattedWorkHM)", color: ActivityType.work.accentColor)
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    private func insightPill(label: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold, design: .rounded))
+                .foregroundStyle(Theme.dim)
+            Text(value)
+                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .foregroundStyle(color)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(color.opacity(0.08))
+        )
+    }
+
+    private func statFoot(label: String, value: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Text("\(label):")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Theme.dim)
+            Text(value)
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundStyle(color)
+        }
     }
 
     private func periodButton(_ period: StatsPeriod) -> some View {
@@ -743,13 +886,17 @@ struct ContentView: View {
                     Text("All").tag("all")
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 300)
+                .frame(maxWidth: 320)
+
+                Text("Exports work hours and saved AI summaries for the selected period.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.dim)
 
                 HStack(spacing: 8) {
                     exportButton(label: "CSV", icon: "doc.text", format: "csv")
                     exportButton(label: "JSON", icon: "curlybraces", format: "json")
                 }
-                .frame(maxWidth: 300)
+                .frame(maxWidth: 320)
             }
             Spacer()
         }
@@ -759,8 +906,10 @@ struct ContentView: View {
     private func exportButton(label: String, icon: String, format: String) -> some View {
         Button(action: { doExport(format: format) }) {
             HStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 11))
-                Text(label).font(.system(size: 12, weight: .semibold))
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
@@ -849,11 +998,27 @@ struct ContentView: View {
 
     // MARK: - Helpers
 
+    private func shiftSelectedDay(by offset: Int) {
+        guard let date = Calendar.current.date(byAdding: .day, value: offset, to: vm.selectedDate) else { return }
+        let today = Calendar.current.startOfDay(for: Date())
+        if date > today {
+            vm.jumpToToday()
+        } else {
+            vm.setSelectedDate(date)
+        }
+    }
+
     private func formatDur(_ sec: TimeInterval) -> String {
-        let h = Int(sec) / 3600
-        let m = Int(sec) % 3600 / 60
+        let totalMinutes = Int(sec) / 60
+        let h = totalMinutes / 60
+        let m = totalMinutes % 60
         if h > 0 { return "\(h)h \(String(format: "%02d", m))m" }
         return "\(m)m"
+    }
+
+    private func signedDuration(_ sec: TimeInterval) -> String {
+        let prefix = sec >= 0 ? "+" : "-"
+        return prefix + formatDur(abs(sec))
     }
 }
 
@@ -861,6 +1026,7 @@ struct ContentView: View {
 
 struct PulseModifier: ViewModifier {
     @State private var isPulsing = false
+
     func body(content: Content) -> some View {
         content
             .scaleEffect(isPulsing ? 1.3 : 1.0)

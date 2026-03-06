@@ -1,13 +1,18 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @ObservedObject var vm: TrackerViewModel
+
     @AppStorage("linearAPIKey") private var linearAPIKey = ""
     @AppStorage("syncInterval") private var syncInterval: Double = 300
+    @AppStorage("linearResyncLookbackDays") private var linearResyncLookbackDays = 30
     @AppStorage("dbPath") private var dbPath = ""
     @AppStorage("anthropicAPIKey") private var anthropicAPIKey = ""
 
     @State private var testResult: String?
+    @State private var syncResult: String?
     @State private var isTesting = false
+    @State private var isResyncing = false
 
     var body: some View {
         Form {
@@ -34,6 +39,18 @@ struct SettingsView: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 300)
+                    .onChange(of: syncInterval) { _ in
+                        vm.reloadSyncTimer()
+                    }
+                }
+
+                HStack {
+                    Text("Manual resync range")
+                    Stepper(value: $linearResyncLookbackDays, in: 1...365) {
+                        Text("\(linearResyncLookbackDays) days")
+                            .monospacedDigit()
+                    }
+                    .frame(maxWidth: 180, alignment: .leading)
                 }
 
                 HStack {
@@ -42,16 +59,27 @@ struct SettingsView: View {
                     }
                     .disabled(linearAPIKey.isEmpty || isTesting)
 
-                    if isTesting {
+                    Button("Run Manual Resync") {
+                        runManualResync()
+                    }
+                    .disabled(linearAPIKey.isEmpty || isResyncing)
+
+                    if isTesting || isResyncing {
                         ProgressView()
                             .scaleEffect(0.6)
                     }
+                }
 
-                    if let result = testResult {
-                        Text(result)
-                            .font(.caption)
-                            .foregroundStyle(result.contains("Connected") ? .green : .red)
-                    }
+                if let result = testResult {
+                    Text(result)
+                        .font(.caption)
+                        .foregroundStyle(result.contains("Connected") ? .green : .red)
+                }
+
+                if let result = syncResult {
+                    Text(result)
+                        .font(.caption)
+                        .foregroundStyle(result.contains("Synced") || result.contains("No new") ? .green : .red)
                 }
             }
 
@@ -63,25 +91,30 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                if !dbPath.isEmpty {
-                    Button("Reset to Default") {
-                        dbPath = ""
-                        DatabaseManager.shared.reopen()
+                HStack {
+                    if !dbPath.isEmpty {
+                        Button("Reset to Default") {
+                            dbPath = ""
+                            DatabaseManager.shared.reopen()
+                            vm.refresh()
+                        }
                     }
-                }
 
-                Button("Reopen Database") {
-                    DatabaseManager.shared.reopen()
+                    Button("Reopen Database") {
+                        DatabaseManager.shared.reopen()
+                        vm.refresh()
+                    }
                 }
             }
 
             Section("About") {
-                LabeledContent("Version", value: "1.1.0")
+                LabeledContent("Version", value: "1.2.0")
                 LabeledContent("Data", value: "Shared SQLite (tracker.db)")
+                LabeledContent("History", value: "Per-day notes/logs + analytics")
             }
         }
         .formStyle(.grouped)
-        .frame(width: 500, height: 480)
+        .frame(width: 520, height: 540)
     }
 
     private func testConnection() {
@@ -96,6 +129,25 @@ struct SettingsView: View {
                 } else {
                     testResult = "Error: \(error ?? "Unknown error")"
                 }
+            }
+        }
+    }
+
+    private func runManualResync() {
+        isResyncing = true
+        syncResult = nil
+        Task {
+            let result = await LinearClient.shared.syncToNotes(lookbackDays: linearResyncLookbackDays)
+            await MainActor.run {
+                isResyncing = false
+                if let error = result.error {
+                    syncResult = "Error: \(error)"
+                } else if result.added > 0 {
+                    syncResult = "Synced \(result.added) tasks from the last \(linearResyncLookbackDays) days"
+                } else {
+                    syncResult = "No new Linear tasks in the last \(linearResyncLookbackDays) days"
+                }
+                vm.refresh()
             }
         }
     }
