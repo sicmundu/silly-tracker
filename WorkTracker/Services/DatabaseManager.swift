@@ -33,51 +33,7 @@ final class DatabaseManager {
         Self.defaultDbPath
     }
 
-    /// Migrate DB from old locations to the current Application Support/SillyTrack directory.
-    /// Checks: 1) ~/Library/Application Support/WorkTracker (previous rename)
-    ///          2) ~/Documents/WorkTracker (original location)
-    /// Called once on first launch after the update.
-    private func migrateFromDocumentsIfNeeded() {
-        let fm = FileManager.default
-        let newDb = URL(fileURLWithPath: Self.defaultDbPath)
-
-        // Don't migrate if we already have a DB in the new location
-        guard !fm.fileExists(atPath: newDb.path) else { return }
-
-        // Try old locations in priority order
-        let oldDirs = [
-            fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("WorkTracker"),
-            fm.urls(for: .documentDirectory, in: .userDomainMask).first!
-                .appendingPathComponent("WorkTracker")
-        ]
-
-        for oldDir in oldDirs {
-            let oldDb = oldDir.appendingPathComponent("tracker.db")
-            guard fm.fileExists(atPath: oldDb.path) else { continue }
-
-            do {
-                try fm.copyItem(at: oldDb, to: newDb)
-                // Also move WAL/SHM if present
-                for ext in ["-wal", "-shm"] {
-                    let oldFile = oldDir.appendingPathComponent("tracker.db\(ext)")
-                    let newFile = Self.defaultDir.appendingPathComponent("tracker.db\(ext)")
-                    if fm.fileExists(atPath: oldFile.path) {
-                        try? fm.copyItem(at: oldFile, to: newFile)
-                    }
-                }
-                print("Migrated DB from \(oldDb.path) to \(newDb.path)")
-                return
-            } catch {
-                print("DB migration from \(oldDb.path) failed: \(error)")
-            }
-        }
-    }
-
     private init() {
-        migrateFromDocumentsIfNeeded()
-        // Clear legacy custom dbPath from UserDefaults
-        UserDefaults.standard.removeObject(forKey: "dbPath")
         open()
         createTables()
     }

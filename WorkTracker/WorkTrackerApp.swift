@@ -6,39 +6,6 @@ struct SillyTrackApp: App {
     @StateObject private var vm = TrackerViewModel()
     private let updaterController = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
 
-    init() {
-        migrateUserDefaultsIfNeeded()
-    }
-
-    /// Migrate UserDefaults from old bundle ID (com.worktracker.app) on first launch.
-    private func migrateUserDefaultsIfNeeded() {
-        let current = UserDefaults.standard
-        // Skip if already migrated
-        guard !current.bool(forKey: "didMigrateFromWorkTracker") else { return }
-        guard let old = UserDefaults(suiteName: "com.worktracker.app") else { return }
-
-        let keysToMigrate = [
-            "anthropicAPIKey",
-            "linearAPIKey",
-            "linearLastSuccessfulSyncAt",
-            "isMiniMode",
-            "SUEnableAutomaticChecks"
-        ]
-
-        var migrated = false
-        for key in keysToMigrate {
-            if let value = old.object(forKey: key) {
-                current.set(value, forKey: key)
-                migrated = true
-            }
-        }
-
-        if migrated {
-            print("Migrated UserDefaults from com.worktracker.app")
-        }
-        current.set(true, forKey: "didMigrateFromWorkTracker")
-    }
-
     var body: some Scene {
         // Main window — shares the same ViewModel
         WindowGroup {

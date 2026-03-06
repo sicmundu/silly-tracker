@@ -118,20 +118,14 @@ final class AIClient {
     // MARK: - Read .env
 
     private func readEnvToken() -> String? {
-        // Try common locations for .env
-        let paths = [
-            NSHomeDirectory() + "/Documents/SillyTrack/.env",
-            FileManager.default.currentDirectoryPath + "/.env"
-        ]
-
-        for path in paths {
-            guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
-            for line in content.components(separatedBy: .newlines) {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("ANTHROPIC_AUTH_TOKEN=") || trimmed.hasPrefix("ANTHROPIC_API_KEY=") {
-                    let value = trimmed.split(separator: "=", maxSplits: 1).last.map(String.init) ?? ""
-                    return value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                }
+        // Try .env in the current working directory
+        let path = FileManager.default.currentDirectoryPath + "/.env"
+        guard let content = try? String(contentsOfFile: path, encoding: .utf8) else { return nil }
+        for line in content.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("ANTHROPIC_AUTH_TOKEN=") || trimmed.hasPrefix("ANTHROPIC_API_KEY=") {
+                let value = trimmed.split(separator: "=", maxSplits: 1).last.map(String.init) ?? ""
+                return value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
             }
         }
         return nil
