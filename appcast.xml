@@ -7,15 +7,15 @@
         <language>en</language>
         <item>
             <title>Version 1.1.0</title>
-            <pubDate>Fri, 06 Mar 2026 12:08:24 +0000</pubDate>
+            <pubDate>Fri, 06 Mar 2026 12:25:52 +0000</pubDate>
             <sparkle:version>2</sparkle:version>
             <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
             <enclosure
                 url="https://github.com/sicmundu/silly-tracker/releases/download/v1.1.0/WorkTracker-1.1.0.zip"
-                length="1575914"
+                length="1576018"
                 type="application/octet-stream"
-                sparkle:edSignature="17v2sHOSGMgUlBwRrcTtIkws/YnIGPqWxcyA6pvfvIle7GNfyZsYTmzU1HUrDSfU8quEqhEb9uODPaTAH7MtAg=="
+                sparkle:edSignature="ZDKW++3KBGTQkZg8/GhFQjNKUTxFL2qcGwr8jPoXHW4+hfPruZIh9+7l/AuxEK5Zyd/CCu9MB64l9yE008reCQ=="
             />
         </item>
     </channel>
