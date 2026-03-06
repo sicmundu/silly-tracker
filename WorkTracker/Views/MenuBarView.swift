@@ -5,103 +5,115 @@ struct MenuBarView: View {
     @State private var hoveredAction: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Status header
-            statusHeader
-                .padding(.horizontal, 14)
-                .padding(.top, 14)
-                .padding(.bottom, 10)
-
-            Divider().opacity(0.3)
-
-            // Actions
-            VStack(spacing: 2) {
-                if let active = vm.activeEntry {
-                    menuAction(
-                        id: "stop",
-                        icon: "stop.fill",
-                        label: "Stop \(active.type.label)",
-                        color: Color(red: 0.97, green: 0.44, blue: 0.44)
-                    ) {
-                        vm.stopActivity()
+        VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+            SectionCard {
+                VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
+                            Text("WORKTRACKER")
+                                .font(DesignSystem.Typography.microBold)
+                                .tracking(1.2)
+                                .foregroundStyle(DesignSystem.Colors.textSecondary)
+                            Text(vm.activeEntry == nil ? "Ready to start" : "Tracking in progress")
+                                .font(DesignSystem.Typography.caption)
+                                .foregroundStyle(DesignSystem.Colors.textPrimary)
+                        }
+                        Spacer()
+                        Image(systemName: vm.activeEntry?.type.icon ?? "timer")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(vm.activeEntry?.type.accentColor ?? DesignSystem.Colors.textSecondary)
                     }
 
-                    Divider().opacity(0.2).padding(.vertical, 2)
+                    statusHeader
+                }
+            }
 
-                    ForEach(ActivityType.allCases) { type in
-                        if type != active.type {
+            SectionCard {
+                VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
+                    Text("Controls")
+                        .font(DesignSystem.Typography.captionBold)
+                        .foregroundStyle(DesignSystem.Colors.textSecondary)
+
+                    if let active = vm.activeEntry {
+                        menuAction(
+                            id: "stop",
+                            icon: "stop.fill",
+                            label: "Stop \(active.type.label)",
+                            color: DesignSystem.Colors.danger
+                        ) {
+                            vm.stopActivity()
+                        }
+
+                        ForEach(ActivityType.allCases) { type in
+                            if type != active.type {
+                                menuAction(
+                                    id: "switch-\(type.rawValue)",
+                                    icon: type.icon,
+                                    label: "Switch to \(type.label)",
+                                    color: type.accentColor
+                                ) {
+                                    vm.startActivity(type)
+                                }
+                            }
+                        }
+                    } else {
+                        ForEach(ActivityType.allCases) { type in
                             menuAction(
-                                id: "switch-\(type.rawValue)",
+                                id: "start-\(type.rawValue)",
                                 icon: type.icon,
-                                label: "Switch to \(type.label)",
+                                label: "Start \(type.label)",
                                 color: type.accentColor
                             ) {
                                 vm.startActivity(type)
                             }
                         }
                     }
-                } else {
+                }
+            }
+
+            SectionCard {
+                VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
+                    Text("Today")
+                        .font(DesignSystem.Typography.captionBold)
+                        .foregroundStyle(DesignSystem.Colors.textSecondary)
+
                     ForEach(ActivityType.allCases) { type in
-                        menuAction(
-                            id: "start-\(type.rawValue)",
-                            icon: type.icon,
-                            label: "Start \(type.label)",
-                            color: type.accentColor
-                        ) {
-                            vm.startActivity(type)
+                        let total = vm.todayTotals[type] ?? 0
+                        if total > 0 {
+                            HStack {
+                                ActivityBadge(title: type.label, color: type.accentColor)
+                                Spacer()
+                                Text(formatDuration(total))
+                                    .font(DesignSystem.Typography.monoCaption)
+                                    .foregroundStyle(type.accentColor)
+                            }
                         }
                     }
                 }
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
 
-            Divider().opacity(0.3)
+            SectionCard {
+                VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
+                    Text("Actions")
+                        .font(DesignSystem.Typography.captionBold)
+                        .foregroundStyle(DesignSystem.Colors.textSecondary)
 
-            // Today totals
-            VStack(spacing: 4) {
-                ForEach(ActivityType.allCases) { type in
-                    let total = vm.todayTotals[type] ?? 0
-                    if total > 0 {
-                        HStack {
-                            Image(systemName: type.icon)
-                                .font(.system(size: 10))
-                                .foregroundStyle(type.accentColor)
-                                .frame(width: 16)
-                            Text(type.label)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(formatDuration(total))
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .foregroundStyle(type.accentColor)
-                        }
+                    menuAction(id: "ai", icon: "sparkles", label: "Generate AI Summary", color: DesignSystem.Colors.brand) {
+                        Task { await vm.generateSummary(for: Date()) }
                     }
+                    .disabled(vm.isGeneratingSummary || vm.todayNotes.isEmpty)
+                    .opacity(vm.todayNotes.isEmpty ? 0.45 : 1)
+
+                    menuAction(id: "sync", icon: "arrow.triangle.2.circlepath", label: "Sync Linear", color: DesignSystem.Colors.info) {
+                        Task { await vm.linearSync() }
+                    }
+                    .disabled(vm.isSyncing)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-
-            Divider().opacity(0.3)
-
-            // Bottom actions
-            VStack(spacing: 2) {
-                menuAction(id: "ai", icon: "sparkles", label: "AI Summary", color: .purple) {
-                    Task { await vm.generateSummary(for: Date()) }
-                }
-                .disabled(vm.isGeneratingSummary || vm.todayNotes.isEmpty)
-                .opacity(vm.todayNotes.isEmpty ? 0.4 : 1)
-
-                menuAction(id: "sync", icon: "arrow.triangle.2.circlepath", label: "Sync Linear", color: Color(red: 0.65, green: 0.55, blue: 0.98)) {
-                    Task { await vm.linearSync() }
-                }
-                .disabled(vm.isSyncing)
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .padding(.bottom, 6)
         }
-        .frame(width: 230)
+        .padding(12)
+        .frame(width: 276)
+        .background(DesignSystem.Gradients.shell)
     }
 
     // MARK: - Status Header
@@ -109,38 +121,34 @@ struct MenuBarView: View {
     private var statusHeader: some View {
         Group {
             if let active = vm.activeEntry {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
+                    HStack(spacing: DesignSystem.Layout.spacingXS) {
                         Circle()
                             .fill(active.type.accentColor)
                             .frame(width: 7, height: 7)
                             .modifier(PulseModifier())
 
-                        Image(systemName: active.type.icon)
-                            .font(.system(size: 12, weight: .semibold))
+                        Text(active.type.label.uppercased())
+                            .font(DesignSystem.Typography.microBold)
+                            .tracking(1)
                             .foregroundStyle(active.type.accentColor)
-
-                        Text(active.type.label)
-                            .font(.system(size: 13, weight: .bold, design: .rounded))
-                            .foregroundStyle(active.type.accentColor)
-
-                        Spacer()
                     }
 
                     Text(vm.elapsedFormatted)
-                        .font(.system(size: 24, weight: .heavy, design: .monospaced))
+                        .font(DesignSystem.Typography.monoTitle)
                         .monospacedDigit()
                         .foregroundStyle(active.type.accentColor)
                         .contentTransition(.numericText(countsDown: false))
                 }
             } else {
-                HStack(spacing: 6) {
-                    Image(systemName: "moon.zzz.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Text("Idle")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
+                    Text("IDLE")
+                        .font(DesignSystem.Typography.microBold)
+                        .tracking(1.2)
+                        .foregroundStyle(DesignSystem.Colors.textSecondary)
+                    Text("No active timer")
+                        .font(DesignSystem.Typography.caption)
+                        .foregroundStyle(DesignSystem.Colors.textSecondary)
                 }
             }
         }
@@ -150,21 +158,25 @@ struct MenuBarView: View {
 
     private func menuAction(id: String, icon: String, label: String, color: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: DesignSystem.Layout.spacingSM) {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(color)
                     .frame(width: 16)
                 Text(label)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .font(DesignSystem.Typography.body)
+                    .foregroundStyle(DesignSystem.Colors.textPrimary)
                 Spacer()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
+            .padding(.horizontal, DesignSystem.Layout.spacingMD)
+            .padding(.vertical, DesignSystem.Layout.spacingSM)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(hoveredAction == id ? color.opacity(0.1) : .clear)
+                RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
+                    .fill(hoveredAction == id ? color.opacity(0.10) : DesignSystem.Colors.surfaceMuted.opacity(0.55))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
+                    .strokeBorder(color.opacity(hoveredAction == id ? 0.15 : 0.08), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }

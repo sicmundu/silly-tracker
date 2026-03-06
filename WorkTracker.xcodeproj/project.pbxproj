@@ -18,6 +18,14 @@
 		A10009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10009 /* Assets.xcassets */; };
 		A10010 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = B10010 /* libsqlite3.tbd */; };
 		A10011 /* AIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* AIClient.swift */; };
+		A10012 /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012 /* DesignSystem.swift */; };
+		A10013 /* ActivityBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10013 /* ActivityBadge.swift */; };
+		A10014 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014 /* EmptyStateView.swift */; };
+		A10015 /* PrimaryActionButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10015 /* PrimaryActionButton.swift */; };
+		A10016 /* SecondaryChip.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10016 /* SecondaryChip.swift */; };
+		A10017 /* SectionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10017 /* SectionCard.swift */; };
+		A10018 /* SectionHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10018 /* SectionHeader.swift */; };
+		A10019 /* StatPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10019 /* StatPill.swift */; };
 		AA9D9B7A0F8E255F089C3E9C /* MiniWidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8783F0F201A08DA74670F59 /* MiniWidgetView.swift */; };
 /* End PBXBuildFile section */
 
@@ -33,6 +41,14 @@
 		B10009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10010 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		B10011 /* AIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIClient.swift; sourceTree = "<group>"; };
+		B10012 /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		B10013 /* ActivityBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityBadge.swift; sourceTree = "<group>"; };
+		B10014 /* EmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
+		B10015 /* PrimaryActionButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrimaryActionButton.swift; sourceTree = "<group>"; };
+		B10016 /* SecondaryChip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecondaryChip.swift; sourceTree = "<group>"; };
+		B10017 /* SectionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionCard.swift; sourceTree = "<group>"; };
+		B10018 /* SectionHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionHeader.swift; sourceTree = "<group>"; };
+		B10019 /* StatPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatPill.swift; sourceTree = "<group>"; };
 		B10099 /* WorkTracker.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WorkTracker.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C8783F0F201A08DA74670F59 /* MiniWidgetView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MiniWidgetView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -74,11 +90,27 @@
 			isa = PBXGroup;
 			children = (
 				B10002 /* ContentView.swift */,
+				B10012 /* DesignSystem.swift */,
 				B10003 /* SettingsView.swift */,
 				B10004 /* MenuBarView.swift */,
 				C8783F0F201A08DA74670F59 /* MiniWidgetView.swift */,
+				D10008 /* Components */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		D10008 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				B10013 /* ActivityBadge.swift */,
+				B10014 /* EmptyStateView.swift */,
+				B10015 /* PrimaryActionButton.swift */,
+				B10016 /* SecondaryChip.swift */,
+				B10017 /* SectionCard.swift */,
+				B10018 /* SectionHeader.swift */,
+				B10019 /* StatPill.swift */,
+			);
+			path = Components;
 			sourceTree = "<group>";
 		};
 		D10004 /* Models */ = {
@@ -194,6 +226,14 @@
 				A10007 /* DatabaseManager.swift in Sources */,
 				A10008 /* LinearClient.swift in Sources */,
 				A10011 /* AIClient.swift in Sources */,
+				A10012 /* DesignSystem.swift in Sources */,
+				A10013 /* ActivityBadge.swift in Sources */,
+				A10014 /* EmptyStateView.swift in Sources */,
+				A10015 /* PrimaryActionButton.swift in Sources */,
+				A10016 /* SecondaryChip.swift in Sources */,
+				A10017 /* SectionCard.swift in Sources */,
+				A10018 /* SectionHeader.swift in Sources */,
+				A10019 /* StatPill.swift in Sources */,
 				AA9D9B7A0F8E255F089C3E9C /* MiniWidgetView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

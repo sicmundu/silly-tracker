@@ -1,6 +1,12 @@
 import Foundation
 import SwiftUI
 
+private enum ActivityPalette {
+    static let work = Color(red: 0.18, green: 0.58, blue: 0.46)
+    static let lunch = Color(red: 0.78, green: 0.55, blue: 0.13)
+    static let breakTime = Color(red: 0.13, green: 0.54, blue: 0.63)
+}
+
 // MARK: - Activity Type
 
 enum ActivityType: String, CaseIterable, Identifiable {
@@ -28,14 +34,14 @@ enum ActivityType: String, CaseIterable, Identifiable {
 
     var accentColor: Color {
         switch self {
-        case .work: return Color(red: 0.29, green: 0.87, blue: 0.50)   // #4ade80
-        case .lunch: return Color(red: 0.98, green: 0.80, blue: 0.08)  // #facc15
-        case .break: return Color(red: 0.13, green: 0.83, blue: 0.93)  // #22d3ee
+        case .work: return ActivityPalette.work
+        case .lunch: return ActivityPalette.lunch
+        case .break: return ActivityPalette.breakTime
         }
     }
 
     var bgColor: Color {
-        accentColor.opacity(0.08)
+        accentColor.opacity(0.12)
     }
 }
 

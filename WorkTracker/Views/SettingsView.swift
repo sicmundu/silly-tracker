@@ -15,22 +15,64 @@ struct SettingsView: View {
     @State private var isResyncing = false
 
     var body: some View {
-        Form {
-            Section("AI Summary (Anthropic)") {
-                SecureField("API Key (or OAuth token)", text: $anthropicAPIKey)
-                    .textFieldStyle(.roundedBorder)
-
-                Text("Supports sk-ant-api or sk-ant-oat tokens. Leave empty to auto-read from .env")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingLG) {
+                header
+                aiCard
+                linearCard
+                storageCard
+                aboutCard
             }
+            .padding(20)
+        }
+        .frame(width: 560, height: 620)
+        .background(DesignSystem.Gradients.shell)
+    }
 
-            Section("Linear Integration") {
-                SecureField("API Key", text: $linearAPIKey)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
+            Text("Settings")
+                .font(DesignSystem.Typography.display)
+                .foregroundStyle(DesignSystem.Colors.textPrimary)
+            Text("Configure AI, Linear sync cadence, and local storage without leaving the dashboard flow.")
+                .font(DesignSystem.Typography.caption)
+                .foregroundStyle(DesignSystem.Colors.textSecondary)
+        }
+    }
+
+    private var aiCard: some View {
+        SectionCard {
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+                SectionHeader(
+                    title: "AI Summary",
+                    subtitle: "Anthropic credentials for daily summaries."
+                )
+
+                SecureField("API Key or OAuth token", text: $anthropicAPIKey)
                     .textFieldStyle(.roundedBorder)
 
-                HStack {
+                Text("Supports `sk-ant-api` and `sk-ant-oat` tokens. Leave empty to auto-read from `.env`.")
+                    .font(DesignSystem.Typography.caption)
+                    .foregroundStyle(DesignSystem.Colors.textSecondary)
+            }
+        }
+    }
+
+    private var linearCard: some View {
+        SectionCard {
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+                SectionHeader(
+                    title: "Linear",
+                    subtitle: "Background sync cadence and manual recovery imports."
+                )
+
+                SecureField("Linear API Key", text: $linearAPIKey)
+                    .textFieldStyle(.roundedBorder)
+
+                VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
                     Text("Sync interval")
+                        .font(DesignSystem.Typography.captionBold)
+                        .foregroundStyle(DesignSystem.Colors.textSecondary)
                     Picker("", selection: $syncInterval) {
                         Text("1 min").tag(60.0)
                         Text("5 min").tag(300.0)
@@ -38,83 +80,146 @@ struct SettingsView: View {
                         Text("30 min").tag(1800.0)
                     }
                     .pickerStyle(.segmented)
-                    .frame(maxWidth: 300)
                     .onChange(of: syncInterval) { _ in
                         vm.reloadSyncTimer()
                     }
                 }
 
-                HStack {
-                    Text("Manual resync range")
+                HStack(alignment: .center, spacing: DesignSystem.Layout.spacingMD) {
+                    VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
+                        Text("Manual resync range")
+                            .font(DesignSystem.Typography.captionBold)
+                            .foregroundStyle(DesignSystem.Colors.textSecondary)
+                        Text("Use this when you want to backfill missing completed tasks.")
+                            .font(DesignSystem.Typography.caption)
+                            .foregroundStyle(DesignSystem.Colors.textSecondary)
+                    }
+
+                    Spacer()
+
                     Stepper(value: $linearResyncLookbackDays, in: 1...365) {
                         Text("\(linearResyncLookbackDays) days")
+                            .font(DesignSystem.Typography.monoCaption)
                             .monospacedDigit()
                     }
-                    .frame(maxWidth: 180, alignment: .leading)
+                    .frame(width: 170, alignment: .trailing)
                 }
 
-                HStack {
-                    Button("Test Connection") {
+                HStack(spacing: DesignSystem.Layout.spacingSM) {
+                    PrimaryActionButton(
+                        title: "Test Connection",
+                        icon: "checkmark.shield",
+                        color: DesignSystem.Colors.info,
+                        isLoading: isTesting
+                    ) {
                         testConnection()
                     }
                     .disabled(linearAPIKey.isEmpty || isTesting)
 
-                    Button("Run Manual Resync") {
+                    PrimaryActionButton(
+                        title: "Run Manual Resync",
+                        icon: "arrow.triangle.2.circlepath",
+                        color: DesignSystem.Colors.brand,
+                        isLoading: isResyncing
+                    ) {
                         runManualResync()
                     }
                     .disabled(linearAPIKey.isEmpty || isResyncing)
-
-                    if isTesting || isResyncing {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                    }
                 }
 
                 if let result = testResult {
-                    Text(result)
-                        .font(.caption)
-                        .foregroundStyle(result.contains("Connected") ? .green : .red)
+                    statusRow(
+                        text: result,
+                        color: result.contains("Connected") ? DesignSystem.Colors.success : DesignSystem.Colors.danger
+                    )
                 }
 
                 if let result = syncResult {
-                    Text(result)
-                        .font(.caption)
-                        .foregroundStyle(result.contains("Synced") || result.contains("No new") ? .green : .red)
+                    statusRow(
+                        text: result,
+                        color: (result.contains("Synced") || result.contains("No new")) ? DesignSystem.Colors.success : DesignSystem.Colors.danger
+                    )
                 }
             }
+        }
+    }
 
-            Section("Database") {
+    private var storageCard: some View {
+        SectionCard {
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+                SectionHeader(
+                    title: "Storage",
+                    subtitle: "Choose the SQLite file used by the tracker."
+                )
+
                 TextField("Custom DB path (leave empty for default)", text: $dbPath)
                     .textFieldStyle(.roundedBorder)
 
-                Text("Default: ~/Documents/WorkTracker/tracker.db")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text("Default location: `~/Documents/WorkTracker/tracker.db`.")
+                    .font(DesignSystem.Typography.caption)
+                    .foregroundStyle(DesignSystem.Colors.textSecondary)
 
-                HStack {
+                HStack(spacing: DesignSystem.Layout.spacingSM) {
                     if !dbPath.isEmpty {
-                        Button("Reset to Default") {
+                        SecondaryChip(title: "Reset to default", icon: "arrow.uturn.backward", isActive: false, activeColor: DesignSystem.Colors.warning) {
                             dbPath = ""
                             DatabaseManager.shared.reopen()
                             vm.refresh()
                         }
                     }
 
-                    Button("Reopen Database") {
+                    SecondaryChip(title: "Reopen database", icon: "externaldrive", isActive: false, activeColor: DesignSystem.Colors.brand) {
                         DatabaseManager.shared.reopen()
                         vm.refresh()
                     }
                 }
             }
+        }
+    }
 
-            Section("About") {
-                LabeledContent("Version", value: "1.2.0")
-                LabeledContent("Data", value: "Shared SQLite (tracker.db)")
-                LabeledContent("History", value: "Per-day notes/logs + analytics")
+    private var aboutCard: some View {
+        SectionCard {
+            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
+                SectionHeader(
+                    title: "About",
+                    subtitle: "Current build capabilities."
+                )
+
+                infoRow(label: "Version", value: "1.2.0")
+                infoRow(label: "Data", value: "Shared SQLite tracker.db")
+                infoRow(label: "Experience", value: "History, analytics, redesigned dashboard")
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 520, height: 540)
+    }
+
+    private func infoRow(label: String, value: String) -> some View {
+        HStack {
+            Text(label.uppercased())
+                .font(DesignSystem.Typography.microBold)
+                .tracking(0.8)
+                .foregroundStyle(DesignSystem.Colors.textSecondary)
+            Spacer()
+            Text(value)
+                .font(DesignSystem.Typography.captionBold)
+                .foregroundStyle(DesignSystem.Colors.textPrimary)
+        }
+    }
+
+    private func statusRow(text: String, color: Color) -> some View {
+        HStack(spacing: DesignSystem.Layout.spacingXS) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(text)
+                .font(DesignSystem.Typography.caption)
+                .foregroundStyle(DesignSystem.Colors.textPrimary)
+        }
+        .padding(.horizontal, DesignSystem.Layout.spacingMD)
+        .padding(.vertical, DesignSystem.Layout.spacingSM)
+        .background(
+            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
+                .fill(color.opacity(0.08))
+        )
     }
 
     private func testConnection() {
