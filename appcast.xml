@@ -6,6 +6,19 @@
         <description>WorkTracker updates</description>
         <language>en</language>
         <item>
+            <title>Version 1.2.0</title>
+            <pubDate>Fri, 06 Mar 2026 12:31:32 +0000</pubDate>
+            <sparkle:version>3</sparkle:version>
+            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+            <enclosure
+                url="https://github.com/sicmundu/silly-tracker/releases/download/v1.2.0/WorkTracker-1.2.0.zip"
+                length="1590158"
+                type="application/octet-stream"
+                sparkle:edSignature="gi5AwYtKloZ7ZIQUJ6x2+MPCPhwBpIhhMYaBH9NwsDSE7/WdO8g+jB+DLSVa4+5qK9Q3+RJjpDkbOKd40b47Cg=="
+            />
+        </item>
+        <item>
             <title>Version 1.1.0</title>
             <pubDate>Fri, 06 Mar 2026 12:25:52 +0000</pubDate>
             <sparkle:version>2</sparkle:version>
