@@ -206,14 +206,17 @@ struct ContentView: View {
 
     private var heroTimeBlock: some View {
         VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
-            Text(timeString)
-                .font(DesignSystem.Typography.monoHero)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .foregroundStyle(vm.activeEntry?.type.accentColor ?? Theme.text)
-                .contentTransition(.numericText(countsDown: false))
-                .animation(.easeInOut(duration: 0.15), value: timeString)
+            // Tick every second while tracking, every 30s when idle (just for clock display)
+            TimelineView(.periodic(from: .now, by: vm.activeEntry != nil ? 1 : 30)) { context in
+                Text(Self.timeFormatter.string(from: context.date))
+                    .font(DesignSystem.Typography.monoHero)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .foregroundStyle(vm.activeEntry?.type.accentColor ?? Theme.text)
+                    .contentTransition(.numericText(countsDown: false))
+                    .animation(.easeInOut(duration: 0.15), value: context.date)
+            }
 
             Text(vm.activeEntry == nil ? "Ready to track your next block" : "Current clock time")
                 .font(DesignSystem.Typography.caption)
@@ -313,9 +316,7 @@ struct ContentView: View {
         return f
     }()
 
-    private var timeString: String {
-        Self.timeFormatter.string(from: vm.now)
-    }
+
 
     // MARK: - Controls
 
@@ -662,7 +663,7 @@ struct ContentView: View {
 
                                 Spacer()
 
-                                Text(entry.formattedDuration(now: vm.now))
+                                Text(entry.formattedDuration(now: Date()))
                                     .foregroundStyle(Theme.text)
                                     .font(DesignSystem.Typography.monoBody)
                                     .frame(width: 72, alignment: .trailing)

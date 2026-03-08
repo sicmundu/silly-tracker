@@ -24,7 +24,7 @@ final class TrackerViewModel: ObservableObject {
     @Published var isSyncing = false
     @Published var toastMessage: String?
 
-    /// Ticks every second — views that read `now` re-render automatically.
+    /// Current time — updated every second only while a timer is active.
     @Published var now = Date()
 
     // AI summary
@@ -67,14 +67,25 @@ final class TrackerViewModel: ObservableObject {
     // MARK: - Timers
 
     private func startTimers() {
+        if activeEntry != nil {
+            startTickTimer()
+        }
+        reloadSyncTimer()
+        Task { await linearSync(silent: true) }
+    }
+
+    private func startTickTimer() {
+        guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.tick()
             }
         }
+    }
 
-        reloadSyncTimer()
-        Task { await linearSync(silent: true) }
+    private func stopTickTimer() {
+        timer?.invalidate()
+        timer = nil
     }
 
     func reloadSyncTimer() {
@@ -89,18 +100,17 @@ final class TrackerViewModel: ObservableObject {
     }
 
     private func tick() {
-        now = Date()
+        let current = Date()
         if let active = activeEntry {
-            elapsed = now.timeIntervalSince(active.startTime)
+            now = current
+            elapsed = current.timeIntervalSince(active.startTime)
             let total = Int(elapsed)
             let h = total / 3600
             let m = (total % 3600) / 60
             let s = total % 60
             elapsedFormatted = String(format: "%02d:%02d:%02d", h, m, s)
-        } else {
-            elapsed = 0
-            elapsedFormatted = "00:00:00"
         }
+        // When idle, don't update any @Published properties — avoids unnecessary view redraws.
     }
 
     // MARK: - Actions
@@ -110,6 +120,7 @@ final class TrackerViewModel: ObservableObject {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             refresh()
         }
+        startTickTimer()
         showToast("\(type.label) started")
     }
 
@@ -119,6 +130,9 @@ final class TrackerViewModel: ObservableObject {
         } else {
             showToast("Nothing running")
         }
+        stopTickTimer()
+        elapsed = 0
+        elapsedFormatted = "00:00:00"
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             refresh()
         }
