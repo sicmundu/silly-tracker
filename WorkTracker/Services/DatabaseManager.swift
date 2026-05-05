@@ -536,12 +536,32 @@ final class DatabaseManager {
                 }
             } else {
                 let newEnd = last.start.addingTimeInterval(newDuration)
-                guard newEnd <= bounds.end else { return false }
-                guard let updateStmt = prepareStatement("UPDATE entries SET end_time = ? WHERE id = ?") else { return false }
-                defer { sqlite3_finalize(updateStmt) }
-                bind(Self.simpleFmt.string(from: newEnd), to: updateStmt, at: 1)
-                sqlite3_bind_int64(updateStmt, 2, last.id)
-                guard sqlite3_step(updateStmt) == SQLITE_DONE else { return false }
+                if newEnd <= bounds.end {
+                    guard let updateStmt = prepareStatement("UPDATE entries SET end_time = ? WHERE id = ?") else { return false }
+                    defer { sqlite3_finalize(updateStmt) }
+                    bind(Self.simpleFmt.string(from: newEnd), to: updateStmt, at: 1)
+                    sqlite3_bind_int64(updateStmt, 2, last.id)
+                    guard sqlite3_step(updateStmt) == SQLITE_DONE else { return false }
+                } else {
+                    // Not enough room to extend the last entry without crossing midnight.
+                    // Cap last at the day boundary, then fill remaining hours into earlier free slots.
+                    var remaining = diff
+                    let lastEnd = last.start.addingTimeInterval(last.duration)
+                    if lastEnd < bounds.end {
+                        let added = bounds.end.timeIntervalSince(lastEnd)
+                        guard let updateStmt = prepareStatement("UPDATE entries SET end_time = ? WHERE id = ?") else { return false }
+                        bind(Self.simpleFmt.string(from: bounds.end), to: updateStmt, at: 1)
+                        sqlite3_bind_int64(updateStmt, 2, last.id)
+                        let ok = sqlite3_step(updateStmt) == SQLITE_DONE
+                        sqlite3_finalize(updateStmt)
+                        guard ok else { return false }
+                        remaining -= added
+                    }
+
+                    if remaining > 1 {
+                        guard insertWorkIntoFreeGapsLocked(date: date, bounds: bounds, seconds: remaining) else { return false }
+                    }
+                }
             }
 
             return true
@@ -552,6 +572,55 @@ final class DatabaseManager {
         queue.sync {
             workEditRestrictionLocked(for: date)
         }
+    }
+
+    /// Inserts new work entries totaling `seconds` into the free time slots of `date`.
+    /// Fills slots starting from the latest free interval working backwards, so added
+    /// hours land closest to the existing end-of-day work where possible.
+    private func insertWorkIntoFreeGapsLocked(date: String, bounds: (start: Date, end: Date), seconds: Double) -> Bool {
+        let occupiedSQL = "SELECT start_time, end_time FROM entries WHERE date = ? AND end_time IS NOT NULL ORDER BY start_time"
+        guard let stmt = prepareStatement(occupiedSQL) else { return false }
+        bind(date, to: stmt, at: 1)
+
+        var occupied: [(Date, Date)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let startStr = String(cString: sqlite3_column_text(stmt, 0))
+            let endStr = String(cString: sqlite3_column_text(stmt, 1))
+            guard let s = Self.parseDate(startStr), let e = Self.parseDate(endStr) else { continue }
+            let cs = max(s, bounds.start)
+            let ce = min(e, bounds.end)
+            if ce > cs { occupied.append((cs, ce)) }
+        }
+        sqlite3_finalize(stmt)
+
+        occupied.sort { $0.0 < $1.0 }
+
+        var freeIntervals: [(Date, Date)] = []
+        var cursor = bounds.start
+        for (s, e) in occupied {
+            if s > cursor { freeIntervals.append((cursor, s)) }
+            cursor = max(cursor, e)
+        }
+        if cursor < bounds.end { freeIntervals.append((cursor, bounds.end)) }
+
+        var remaining = seconds
+        for (gs, ge) in freeIntervals.reversed() {
+            if remaining <= 1 { break }
+            let size = ge.timeIntervalSince(gs)
+            let take = min(remaining, size)
+            let entryStart = ge.addingTimeInterval(-take)
+            let insertSQL = "INSERT INTO entries (date, type, start_time, end_time) VALUES (?, 'work', ?, ?)"
+            guard let insertStmt = prepareStatement(insertSQL) else { return false }
+            bind(date, to: insertStmt, at: 1)
+            bind(Self.simpleFmt.string(from: entryStart), to: insertStmt, at: 2)
+            bind(Self.simpleFmt.string(from: ge), to: insertStmt, at: 3)
+            let ok = sqlite3_step(insertStmt) == SQLITE_DONE
+            sqlite3_finalize(insertStmt)
+            guard ok else { return false }
+            remaining -= take
+        }
+
+        return remaining <= 1
     }
 
     // MARK: - Notes
