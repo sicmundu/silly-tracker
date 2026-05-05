@@ -255,13 +255,68 @@ final class DatabaseManager {
             return "Stop the active timer first"
         }
 
-        if overlappingWork.contains(where: {
-            $0.startTime < bounds.start || (($0.endTime ?? bounds.end) > bounds.end)
-        }) {
-            return "Cross-midnight work can't be edited as a single total"
+        return nil
+    }
+
+    /// Splits any closed work entries that straddle the bounds of `date`, so the day's
+    /// hours can be edited as a self-contained unit. The in-day slice keeps the original
+    /// row (re-stamped to `date`); pre- and post-midnight slices become new rows stamped
+    /// on their own day.
+    @discardableResult
+    private func splitWorkAcrossMidnightLocked(for date: String) -> Bool {
+        guard let bounds = Self.dayBounds(for: date) else { return false }
+
+        let crossing = loadEntryRecordsLocked().filter { record in
+            guard record.type == .work, let end = record.endTime else { return false }
+            guard end > bounds.start, record.startTime < bounds.end else { return false }
+            return record.startTime < bounds.start || end > bounds.end
         }
 
-        return nil
+        for record in crossing {
+            guard let end = record.endTime else { continue }
+
+            let inStart = max(record.startTime, bounds.start)
+            let inEnd = min(end, bounds.end)
+            guard inEnd > inStart else { continue }
+
+            let updateSQL = "UPDATE entries SET date = ?, start_time = ?, end_time = ? WHERE id = ?"
+            guard let updateStmt = prepareStatement(updateSQL) else { return false }
+            bind(date, to: updateStmt, at: 1)
+            bind(Self.simpleFmt.string(from: inStart), to: updateStmt, at: 2)
+            bind(Self.simpleFmt.string(from: inEnd), to: updateStmt, at: 3)
+            sqlite3_bind_int64(updateStmt, 4, record.id)
+            let updateOK = sqlite3_step(updateStmt) == SQLITE_DONE
+            sqlite3_finalize(updateStmt)
+            guard updateOK else { return false }
+
+            if record.startTime < bounds.start {
+                let preDate = Self.dayString(from: record.startTime)
+                let insertSQL = "INSERT INTO entries (date, type, start_time, end_time) VALUES (?, ?, ?, ?)"
+                guard let stmt = prepareStatement(insertSQL) else { return false }
+                bind(preDate, to: stmt, at: 1)
+                bind(record.type.rawValue, to: stmt, at: 2)
+                bind(Self.simpleFmt.string(from: record.startTime), to: stmt, at: 3)
+                bind(Self.simpleFmt.string(from: bounds.start), to: stmt, at: 4)
+                let ok = sqlite3_step(stmt) == SQLITE_DONE
+                sqlite3_finalize(stmt)
+                guard ok else { return false }
+            }
+
+            if end > bounds.end {
+                let postDate = Self.dayString(from: bounds.end)
+                let insertSQL = "INSERT INTO entries (date, type, start_time, end_time) VALUES (?, ?, ?, ?)"
+                guard let stmt = prepareStatement(insertSQL) else { return false }
+                bind(postDate, to: stmt, at: 1)
+                bind(record.type.rawValue, to: stmt, at: 2)
+                bind(Self.simpleFmt.string(from: bounds.end), to: stmt, at: 3)
+                bind(Self.simpleFmt.string(from: end), to: stmt, at: 4)
+                let ok = sqlite3_step(stmt) == SQLITE_DONE
+                sqlite3_finalize(stmt)
+                guard ok else { return false }
+            }
+        }
+
+        return true
     }
 
     // MARK: - Entries
@@ -410,7 +465,9 @@ final class DatabaseManager {
     @discardableResult
     func adjustWorkHours(date: String, targetSeconds: Double) -> Bool {
         queue.sync {
+            guard let bounds = Self.dayBounds(for: date) else { return false }
             guard workEditRestrictionLocked(for: date) == nil else { return false }
+            guard splitWorkAcrossMidnightLocked(for: date) else { return false }
 
             let sql = "SELECT id, start_time, end_time FROM entries WHERE date = ? AND type = 'work' ORDER BY start_time"
             guard let stmt = prepareStatement(sql) else { return false }
@@ -479,6 +536,7 @@ final class DatabaseManager {
                 }
             } else {
                 let newEnd = last.start.addingTimeInterval(newDuration)
+                guard newEnd <= bounds.end else { return false }
                 guard let updateStmt = prepareStatement("UPDATE entries SET end_time = ? WHERE id = ?") else { return false }
                 defer { sqlite3_finalize(updateStmt) }
                 bind(Self.simpleFmt.string(from: newEnd), to: updateStmt, at: 1)
