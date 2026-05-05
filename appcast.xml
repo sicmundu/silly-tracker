@@ -114,5 +114,19 @@
     />
 </item>
 
+        <item>
+    <title>Version 1.6.2</title>
+    <pubDate>Tue, 05 May 2026 17:15:46 +0000</pubDate>
+    <sparkle:version>8</sparkle:version>
+    <sparkle:shortVersionString>1.6.2</sparkle:shortVersionString>
+    <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+    <enclosure
+        url="https://github.com/sicmundu/silly-tracker/releases/download/v1.6.2/SillyTrack-1.6.2.zip"
+        length="3307133"
+        type="application/octet-stream"
+        sparkle:edSignature="Bz/EQcrf03j/uoyy7r33MrgDgKXHHzcZhh79I9PpaNiQOWao3lyDrMjoISwrwjIe4tfU66Nb7+evLJATu1SgBA=="
+    />
+</item>
+
     </channel>
 </rss>
