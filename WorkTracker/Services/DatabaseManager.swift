@@ -249,8 +249,6 @@ final class DatabaseManager {
             return effectiveEnd > bounds.start && record.startTime < bounds.end
         }
 
-        guard !overlappingWork.isEmpty else { return "No work entries" }
-
         if overlappingWork.contains(where: { $0.endTime == nil }) {
             return "Stop the active timer first"
         }
@@ -495,7 +493,9 @@ final class DatabaseManager {
             }
             sqlite3_finalize(stmt)
 
-            guard !entries.isEmpty else { return false }
+            if entries.isEmpty {
+                return insertWorkFromMorningLocked(date: date, bounds: bounds, seconds: targetSeconds)
+            }
 
             if targetSeconds <= 0 {
                 let deleteSQL = "DELETE FROM entries WHERE date = ? AND type = 'work'"
@@ -572,6 +572,35 @@ final class DatabaseManager {
         queue.sync {
             workEditRestrictionLocked(for: date)
         }
+    }
+
+    /// Inserts a single work entry on a previously empty day, starting at 09:00 local time.
+    /// Used when the user logs hours for a day where the tracker was never running. Caps
+    /// at the day boundary and shifts the start backwards if the requested duration would
+    /// otherwise cross midnight.
+    private func insertWorkFromMorningLocked(date: String, bounds: (start: Date, end: Date), seconds: Double) -> Bool {
+        guard seconds > 0 else { return true }
+
+        let dayLength = bounds.end.timeIntervalSince(bounds.start)
+        let capped = min(seconds, dayLength)
+
+        let calendar = Calendar.current
+        let nineAM = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: bounds.start) ?? bounds.start
+        var startTime = max(nineAM, bounds.start)
+        var endTime = startTime.addingTimeInterval(capped)
+
+        if endTime > bounds.end {
+            endTime = bounds.end
+            startTime = endTime.addingTimeInterval(-capped)
+        }
+
+        let sql = "INSERT INTO entries (date, type, start_time, end_time) VALUES (?, 'work', ?, ?)"
+        guard let stmt = prepareStatement(sql) else { return false }
+        defer { sqlite3_finalize(stmt) }
+        bind(date, to: stmt, at: 1)
+        bind(Self.simpleFmt.string(from: startTime), to: stmt, at: 2)
+        bind(Self.simpleFmt.string(from: endTime), to: stmt, at: 3)
+        return sqlite3_step(stmt) == SQLITE_DONE
     }
 
     /// Inserts new work entries totaling `seconds` into the free time slots of `date`.

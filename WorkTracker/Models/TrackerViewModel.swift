@@ -357,10 +357,33 @@ final class TrackerViewModel: ObservableObject {
 
     func refreshStats() {
         let range = statsRange
-        weekStats = db.getStats(
+        let raw = db.getStats(
             from: Self.ymdFormatter.string(from: range.start),
             to: Self.ymdFormatter.string(from: range.end)
         )
+        weekStats = fillEmptyDays(raw, range: range)
+    }
+
+    /// Pads the stats list with zero-hour entries for every past day (and today) in the
+    /// range so days where the tracker was never running still show up as clickable rows.
+    /// Future days are excluded.
+    private func fillEmptyDays(_ stats: [DayStats], range: (start: Date, end: Date)) -> [DayStats] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: Date())
+        let start = cal.startOfDay(for: range.start)
+        let end = min(cal.startOfDay(for: range.end), today)
+        guard start <= end else { return stats.sorted { $0.date > $1.date } }
+
+        let existing = Dictionary(uniqueKeysWithValues: stats.map { ($0.date, $0) })
+        var result: [DayStats] = []
+        var cursor = start
+        while cursor <= end {
+            let key = Self.ymdFormatter.string(from: cursor)
+            result.append(existing[key] ?? DayStats(date: key))
+            guard let next = cal.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+        return result.sorted { $0.date > $1.date }
     }
 
     func setStatsPeriod(_ period: StatsPeriod) {
