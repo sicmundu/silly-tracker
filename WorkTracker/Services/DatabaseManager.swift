@@ -29,13 +29,16 @@ final class DatabaseManager {
         defaultDir.appendingPathComponent("tracker.db").path
     }
 
-    var dbPath: String {
-        Self.defaultDbPath
-    }
+    let dbPath: String
 
-    private init() {
+    init(path: String = DatabaseManager.defaultDbPath) {
+        dbPath = path
         open()
         createTables()
+    }
+
+    deinit {
+        sqlite3_close(db)
     }
 
     // MARK: - Connection
@@ -93,6 +96,7 @@ final class DatabaseManager {
         """)
         exec("CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date)")
         exec("CREATE INDEX IF NOT EXISTS idx_entries_start_time ON entries(start_time)")
+        exec("CREATE INDEX IF NOT EXISTS idx_entries_end_time ON entries(end_time)")
         exec("CREATE INDEX IF NOT EXISTS idx_notes_date_created ON day_notes(date, created_at)")
         exec("CREATE INDEX IF NOT EXISTS idx_linear_note_id ON linear_synced_issues(note_id)")
     }
@@ -181,10 +185,21 @@ final class DatabaseManager {
         return (start, end)
     }
 
-    private func loadEntryRecordsLocked() -> [EntryRecord] {
-        let sql = "SELECT id, date, type, start_time, end_time FROM entries ORDER BY start_time"
+    private func loadEntryRecordsLocked(from start: Date, to end: Date) -> [EntryRecord] {
+        // Local timestamps and ISO 8601 timestamps with offsets share the same
+        // date prefix. Widen the SQL window to account for different time zones;
+        // the callers still do exact overlap checks using parsed Dates.
+        let lower = Self.dayString(from: start.addingTimeInterval(-2 * 86_400))
+        let upper = Self.dayString(from: end.addingTimeInterval(2 * 86_400))
+        let sql = """
+            SELECT id, date, type, start_time, end_time FROM entries
+            WHERE (end_time IS NULL OR end_time >= ?) AND start_time < ?
+            ORDER BY start_time
+            """
         guard let stmt = prepareStatement(sql) else { return [] }
         defer { sqlite3_finalize(stmt) }
+        bind(lower, to: stmt, at: 1)
+        bind(upper, to: stmt, at: 2)
 
         var results: [EntryRecord] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -215,7 +230,7 @@ final class DatabaseManager {
         guard let bounds = Self.dayBounds(for: date) else { return [] }
         let now = Date()
 
-        return loadEntryRecordsLocked().compactMap { record in
+        return loadEntryRecordsLocked(from: bounds.start, to: bounds.end).compactMap { record in
             let effectiveEnd = record.endTime ?? now
             let sliceStart = max(record.startTime, bounds.start)
             let sliceEnd = min(effectiveEnd, bounds.end)
@@ -243,17 +258,36 @@ final class DatabaseManager {
         guard let bounds = Self.dayBounds(for: date) else { return "Invalid date" }
         let now = Date()
 
-        let overlappingWork = loadEntryRecordsLocked().filter { record in
-            guard record.type == .work else { return false }
-            let effectiveEnd = record.endTime ?? now
-            return effectiveEnd > bounds.start && record.startTime < bounds.end
-        }
+        return Self.editRestriction(
+            for: bounds, activeWorkStart: activeWorkStartLocked(), now: now
+        )
+    }
 
-        if overlappingWork.contains(where: { $0.endTime == nil }) {
-            return "Stop the active timer first"
-        }
+    /// Fetch once per UI refresh, not once per row SwiftUI renders.
+    func activeWorkStart() -> Date? {
+        queue.sync { activeWorkStartLocked() }
+    }
 
-        return nil
+    private func activeWorkStartLocked() -> Date? {
+        let sql = "SELECT type, start_time FROM entries WHERE end_time IS NULL"
+        guard let stmt = prepareStatement(sql) else { return nil }
+        defer { sqlite3_finalize(stmt) }
+
+        var earliest: Date?
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let type = ActivityType(rawValue: String(cString: sqlite3_column_text(stmt, 0))) ?? .work
+            guard type == .work,
+                  let start = Self.parseDate(String(cString: sqlite3_column_text(stmt, 1))) else { continue }
+            earliest = min(earliest ?? start, start)
+        }
+        return earliest
+    }
+
+    static func editRestriction(
+        for bounds: (start: Date, end: Date), activeWorkStart: Date?, now: Date
+    ) -> String? {
+        guard let activeWorkStart, now > bounds.start, activeWorkStart < bounds.end else { return nil }
+        return "Stop the active timer first"
     }
 
     /// Splits any closed work entries that straddle the bounds of `date`, so the day's
@@ -264,7 +298,7 @@ final class DatabaseManager {
     private func splitWorkAcrossMidnightLocked(for date: String) -> Bool {
         guard let bounds = Self.dayBounds(for: date) else { return false }
 
-        let crossing = loadEntryRecordsLocked().filter { record in
+        let crossing = loadEntryRecordsLocked(from: bounds.start, to: bounds.end).filter { record in
             guard record.type == .work, let end = record.endTime else { return false }
             guard end > bounds.start, record.startTime < bounds.end else { return false }
             return record.startTime < bounds.start || end > bounds.end
@@ -428,7 +462,7 @@ final class DatabaseManager {
             let now = Date()
             var days: [String: DayStats] = [:]
 
-            for record in loadEntryRecordsLocked() {
+            for record in loadEntryRecordsLocked(from: rangeStart, to: rangeEnd) {
                 let effectiveEnd = record.endTime ?? now
                 guard effectiveEnd > rangeStart, record.startTime < rangeEnd else { continue }
 
