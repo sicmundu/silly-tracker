@@ -142,5 +142,19 @@
     />
 </item>
 
+        <item>
+    <title>Version 1.7.1</title>
+    <pubDate>Thu, 26 Nov 2026 06:20:28 +0000</pubDate>
+    <sparkle:version>10</sparkle:version>
+    <sparkle:shortVersionString>1.7.1</sparkle:shortVersionString>
+    <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+    <enclosure
+        url="https://github.com/sicmundu/silly-tracker/releases/download/v1.7.1/SillyTrack-1.7.1.zip"
+        length="3313019"
+        type="application/octet-stream"
+        sparkle:edSignature="Cyr7QT/zyIsfXWiKUJUn5hXSJR9epgBNJdDJNCNwKhmd0G8Z73pYOueB/DSJ/KxywlXYdsc70m432Ng0EGc7Cw=="
+    />
+</item>
+
     </channel>
 </rss>
