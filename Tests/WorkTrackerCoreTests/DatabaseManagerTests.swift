@@ -4,6 +4,7 @@ import SQLite3
 
 final class DatabaseManagerTests: XCTestCase {
     private var dbURL: URL!
+    private var db: DatabaseManager!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -11,8 +12,8 @@ final class DatabaseManagerTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        db = nil
         removeDatabaseArtifacts()
-        UserDefaults.standard.removeObject(forKey: "dbPath")
         try super.tearDownWithError()
     }
 
@@ -24,22 +25,22 @@ final class DatabaseManagerTests: XCTestCase {
             endTime: "2026-03-06T01:15:00"
         )
 
-        let march5 = DatabaseManager.shared.getEntries(for: "2026-03-05")
+        let march5 = db.getEntries(for: "2026-03-05")
         XCTAssertEqual(march5.count, 1)
         XCTAssertEqual(march5[0].duration(), 30 * 60, accuracy: 1)
 
-        let march6 = DatabaseManager.shared.getEntries(for: "2026-03-06")
+        let march6 = db.getEntries(for: "2026-03-06")
         XCTAssertEqual(march6.count, 1)
         XCTAssertEqual(march6[0].duration(), 75 * 60, accuracy: 1)
 
-        let stats = DatabaseManager.shared.getStats(from: "2026-03-05", to: "2026-03-06")
+        let stats = db.getStats(from: "2026-03-05", to: "2026-03-06")
         let statsByDate = Dictionary(uniqueKeysWithValues: stats.map { ($0.date, $0) })
         XCTAssertEqual(statsByDate["2026-03-05"]?.work ?? -1, 30 * 60, accuracy: 1)
         XCTAssertEqual(statsByDate["2026-03-06"]?.work ?? -1, 75 * 60, accuracy: 1)
     }
 
     func testDeletingLinearNoteAlsoDeletesSyncMarker() {
-        let noteId = DatabaseManager.shared.addNoteReturningId(
+        let noteId = db.addNoteReturningId(
             date: "2026-03-06",
             content: "[Linear ENG-1] Restore sync marker"
         )
@@ -50,11 +51,11 @@ final class DatabaseManagerTests: XCTestCase {
             title: "Restore sync marker",
             completedAt: "2026-03-06T10:00:00.000Z"
         )
-        DatabaseManager.shared.markIssueSynced(issue, noteId: noteId)
+        db.markIssueSynced(issue, noteId: noteId)
 
-        XCTAssertTrue(DatabaseManager.shared.isIssueSynced(issue.id))
-        DatabaseManager.shared.deleteNote(id: noteId)
-        XCTAssertFalse(DatabaseManager.shared.isIssueSynced(issue.id))
+        XCTAssertTrue(db.isIssueSynced(issue.id))
+        db.deleteNote(id: noteId)
+        XCTAssertFalse(db.isIssueSynced(issue.id))
     }
 
     func testWorkEditRestrictionAndAdjustHoursForSafeDays() throws {
@@ -71,18 +72,18 @@ final class DatabaseManagerTests: XCTestCase {
             endTime: "2026-03-04T12:00:00"
         )
 
-        XCTAssertNil(DatabaseManager.shared.workEditRestriction(for: "2026-03-04"))
-        XCTAssertTrue(DatabaseManager.shared.adjustWorkHours(date: "2026-03-04", targetSeconds: 90 * 60))
+        XCTAssertNil(db.workEditRestriction(for: "2026-03-04"))
+        XCTAssertTrue(db.adjustWorkHours(date: "2026-03-04", targetSeconds: 90 * 60))
 
-        let total = DatabaseManager.shared
+        let total = db
             .getEntries(for: "2026-03-04")
             .reduce(0.0) { $0 + $1.duration() }
         XCTAssertEqual(total, 90 * 60, accuracy: 1)
     }
 
-    func testWorkEditRestrictionBlocksOpenAndCrossMidnightDays() throws {
+    func testOpenWorkBlocksTodayButClosedCrossMidnightWorkCanBeEdited() throws {
         let today = DatabaseManager.todayStr()
-        let todayStart = today + "T00:01:00"
+        let todayStart = today + "T00:00:00"
         try insertEntry(
             date: today,
             type: "work",
@@ -91,7 +92,7 @@ final class DatabaseManagerTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            DatabaseManager.shared.workEditRestriction(for: today),
+            db.workEditRestriction(for: today),
             "Stop the active timer first"
         )
 
@@ -103,10 +104,45 @@ final class DatabaseManagerTests: XCTestCase {
             endTime: "2026-03-06T00:30:00"
         )
 
-        XCTAssertEqual(
-            DatabaseManager.shared.workEditRestriction(for: "2026-03-06"),
-            "Cross-midnight work can't be edited as a single total"
+        XCTAssertNil(db.workEditRestriction(for: "2026-03-06"))
+        XCTAssertTrue(db.adjustWorkHours(date: "2026-03-06", targetSeconds: 15 * 60))
+        XCTAssertEqual(db.getEntries(for: "2026-03-05").first?.duration() ?? -1, 30 * 60, accuracy: 1)
+        XCTAssertEqual(db.getEntries(for: "2026-03-06").first?.duration() ?? -1, 15 * 60, accuracy: 1)
+    }
+
+    func testNarrowStatsKeepLongRunningAndOffsetEntries() throws {
+        try insertEntry(
+            date: "2026-03-01", type: "work",
+            startTime: "2026-03-01T23:00:00", endTime: "2026-03-08T00:00:00"
         )
+        try insertEntry(
+            date: "2026-02-01", type: "work",
+            startTime: "2026-02-01T09:00:00", endTime: "2026-02-01T10:00:00"
+        )
+        let day = "2026-03-06"
+        let bounds = try XCTUnwrap(DatabaseManager.dayBounds(for: day))
+        let offset = ISO8601DateFormatter()
+        offset.timeZone = TimeZone(secondsFromGMT: 14 * 3600)
+        try insertEntry(
+            date: "2026-03-06", type: "break",
+            startTime: offset.string(from: bounds.start.addingTimeInterval(3600)),
+            endTime: offset.string(from: bounds.start.addingTimeInterval(7200))
+        )
+        let entries = db.getEntries(for: day)
+        XCTAssertEqual(entries.map(\.type), [.work, .break])
+        let stats = try XCTUnwrap(db.getStats(from: day, to: day).first)
+        XCTAssertEqual(stats.work, bounds.end.timeIntervalSince(bounds.start), accuracy: 1)
+        XCTAssertEqual(stats.breakTime, 3600, accuracy: 1)
+    }
+
+    func testWorkEditRestrictionUsesEarliestOpenWorkButIgnoresOpenBreak() throws {
+        try insertEntry(date: "2026-03-01", type: "break", startTime: "2026-03-01T12:00:00", endTime: nil)
+        XCTAssertNil(db.activeWorkStart())
+        try insertEntry(date: "2026-03-04", type: "work", startTime: "2026-03-04T12:00:00", endTime: nil)
+        try insertEntry(date: "2026-03-06", type: "work", startTime: "2026-03-06T12:00:00", endTime: nil)
+        XCTAssertEqual(db.activeWorkStart(), DatabaseManager.parseDate("2026-03-04T12:00:00"))
+        XCTAssertNil(db.workEditRestriction(for: "2026-03-03"))
+        XCTAssertEqual(db.workEditRestriction(for: "2026-03-05"), "Stop the active timer first")
     }
 
     private func insertEntry(date: String, type: String, startTime: String, endTime: String?) throws {
@@ -145,12 +181,12 @@ final class DatabaseManagerTests: XCTestCase {
     }
 
     private func useFreshDatabase() {
+        db = nil
+        if dbURL != nil { removeDatabaseArtifacts() }
         dbURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("sqlite")
-        UserDefaults.standard.set(dbURL.path, forKey: "dbPath")
-        removeDatabaseArtifacts()
-        DatabaseManager.shared.reopen()
+        db = DatabaseManager(path: dbURL.path)
     }
 }
 

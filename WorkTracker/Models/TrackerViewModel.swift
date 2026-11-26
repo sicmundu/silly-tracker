@@ -18,8 +18,6 @@ final class TrackerViewModel: ObservableObject {
     @Published var selectedSummary: DaySummary?
 
     @Published var weekStats: [DayStats] = []
-    @Published var elapsed: TimeInterval = 0
-    @Published var elapsedFormatted: String = "00:00:00"
     @Published var syncStatus: LinearSyncStatus = .init()
     @Published var isSyncing = false
     @Published var toastMessage: String?
@@ -51,6 +49,9 @@ final class TrackerViewModel: ObservableObject {
     private let linear = LinearClient.shared
     private var timer: Timer?
     private var syncTimer: Timer?
+    private var activeWorkStart: Date?
+    private var activeWorkFirstDay: String?
+    private var displayDay = ""
 
     // MARK: - Init
 
@@ -67,9 +68,6 @@ final class TrackerViewModel: ObservableObject {
     // MARK: - Timers
 
     private func startTimers() {
-        if activeEntry != nil {
-            startTickTimer()
-        }
         reloadSyncTimer()
         Task { await linearSync(silent: true) }
     }
@@ -100,17 +98,20 @@ final class TrackerViewModel: ObservableObject {
     }
 
     private func tick() {
+        guard activeEntry != nil else { return }
         let current = Date()
-        if let active = activeEntry {
+        let day = DatabaseManager.dayString(from: current)
+        if day != displayDay {
+            refresh()
+        } else {
             now = current
-            elapsed = current.timeIntervalSince(active.startTime)
-            let total = Int(elapsed)
-            let h = total / 3600
-            let m = (total % 3600) / 60
-            let s = total % 60
-            elapsedFormatted = String(format: "%02d:%02d:%02d", h, m, s)
         }
-        // When idle, don't update any @Published properties — avoids unnecessary view redraws.
+    }
+
+    var elapsedFormatted: String {
+        guard let active = activeEntry else { return "00:00:00" }
+        let total = Int(max(0, now.timeIntervalSince(active.startTime)))
+        return String(format: "%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
     }
 
     // MARK: - Actions
@@ -120,7 +121,6 @@ final class TrackerViewModel: ObservableObject {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             refresh()
         }
-        startTickTimer()
         showToast("\(type.label) started")
     }
 
@@ -130,9 +130,6 @@ final class TrackerViewModel: ObservableObject {
         } else {
             showToast("Nothing running")
         }
-        stopTickTimer()
-        elapsed = 0
-        elapsedFormatted = "00:00:00"
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
             refresh()
         }
@@ -142,14 +139,15 @@ final class TrackerViewModel: ObservableObject {
         guard !content.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         db.addNote(date: date ?? selectedDateString, content: content)
         withAnimation(.easeOut(duration: 0.25)) {
-            refresh()
+            refreshNotes()
         }
     }
 
     func deleteNote(_ note: DayNote) {
         db.deleteNote(id: note.id)
         withAnimation(.easeOut(duration: 0.2)) {
-            refresh()
+            refreshNotes()
+            syncStatus = db.getSyncStatus()
         }
     }
 
@@ -297,6 +295,11 @@ final class TrackerViewModel: ObservableObject {
             return
         }
 
+        guard !isSyncing else {
+            if !silent { showToast("Sync already in progress") }
+            return
+        }
+
         withAnimation { isSyncing = true }
         let (added, skipped, error) = await linear.syncToNotes(lookbackDays: lookbackDays)
         withAnimation { isSyncing = false }
@@ -310,7 +313,7 @@ final class TrackerViewModel: ObservableObject {
         }
 
         if added > 0 {
-            withAnimation { refresh() }
+            withAnimation { refreshNotes() }
             if !silent { showToast("Synced \(added) tasks") }
         } else if !silent {
             showToast(skipped > 0 ? "No new tasks" : "Nothing to sync")
@@ -320,12 +323,26 @@ final class TrackerViewModel: ObservableObject {
     // MARK: - Refresh
 
     func refresh() {
+        now = Date()
+        displayDay = DatabaseManager.dayString(from: now)
         activeEntry = db.getActive()
+        activeWorkStart = db.activeWorkStart()
+        activeWorkFirstDay = activeWorkStart.map(DatabaseManager.dayString)
         refreshTodayData()
         refreshSelectedDay()
         refreshStats()
         syncStatus = db.getSyncStatus()
-        tick()
+        if activeEntry == nil { stopTickTimer() } else { startTickTimer() }
+    }
+
+    private func refreshNotes() {
+        let today = DatabaseManager.todayStr()
+        guard today == displayDay else {
+            refresh()
+            return
+        }
+        todayNotes = db.getNotes(for: today)
+        selectedNotes = isViewingToday ? todayNotes : db.getNotes(for: selectedDateString)
     }
 
     private func refreshTodayData() {
@@ -376,14 +393,14 @@ final class TrackerViewModel: ObservableObject {
 
         let existing = Dictionary(uniqueKeysWithValues: stats.map { ($0.date, $0) })
         var result: [DayStats] = []
-        var cursor = start
-        while cursor <= end {
+        var cursor = end
+        while cursor >= start {
             let key = Self.ymdFormatter.string(from: cursor)
             result.append(existing[key] ?? DayStats(date: key))
-            guard let next = cal.date(byAdding: .day, value: 1, to: cursor) else { break }
-            cursor = next
+            guard let previous = cal.date(byAdding: .day, value: -1, to: cursor) else { break }
+            cursor = previous
         }
-        return result.sorted { $0.date > $1.date }
+        return result
     }
 
     func setStatsPeriod(_ period: StatsPeriod) {
@@ -498,7 +515,10 @@ final class TrackerViewModel: ObservableObject {
     }
 
     func editHoursRestriction(for date: String) -> String? {
-        db.workEditRestriction(for: date)
+        // Date keys are normalized; avoid even a date parse on unrelated rows.
+        guard let firstDay = activeWorkFirstDay, date >= firstDay, date <= displayDay,
+              let bounds = DatabaseManager.dayBounds(for: date) else { return nil }
+        return DatabaseManager.editRestriction(for: bounds, activeWorkStart: activeWorkStart, now: now)
     }
 
     private static let mmmdFormatter: DateFormatter = {
