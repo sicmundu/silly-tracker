@@ -35,31 +35,27 @@ No Electron. No subscriptions. No cloud. Just a native macOS app that stores eve
 ## What it looks like
 
 ```
- ┌──────────────────────────────────────────────────────────────┐
- │  TODAY FOCUS                                    1.2 / 8.0h   │
- │  Live tracking dashboard                                     │
- │                                                              │
- │       16:42:31           WORK ● 02:14:07                     │
- │       Friday afternoon   Started 14:28  ████████░░░ 28%      │
- │                                                              │
- │  ┌─────────────┐ ┌───────────┐ ┌───────────┐                │
- │  │  ■ Stop     │ │ 🍴 Lunch  │ │ ☕ Break   │                │
- │  └─────────────┘ └───────────┘ └───────────┘                │
- │                                                              │
- │  Work 2h 14m    Lunch 45m    Break 12m    3 notes            │
- ├──────────────────────────────────────────────────────────────┤
- │  ● Notes   ○ Log   ○ Stats   ○ Export          ◀ Feb 28 ▶   │
- │──────────────────────────────────────────────────────────────│
- │  ✦ AI Summary  ↻ Sync  ⊟                                    │
- │                                                              │
- │  "Worked on auth flow refactoring and reviewed              │
- │   two PRs from the frontend team."                          │
- │                                                              │
- │  14:32  Fixed race condition in WebSocket reconnect          │
- │  15:10  [Linear ENG-412] Auth token refresh logic            │
- │  15:48  PR review: cart page redesign                        │
- └──────────────────────────────────────────────────────────────┘
+ │  Today · Fri, Feb 28                                  Mini  ?      │
+ │                                                                    │
+ │  Work in progress                            Daily goal · Target 8h│
+ │  02:14:07                                    █████░░░░░░░░░░░░░░░  │
+ │  Started at 2:28 PM                          Lunch 45m · Break 12m │
+ │                                                                    │
+ │  [ ■ Stop Work ]             [ Lunch ]              [ Break ]      │
+ │                                                                    │
+ │  ● Notes     Log     Stats     Export                              │
+ │  ──────────────────────────────────────────────────────────────    │
+ │  ◀  Feb 28, 2026  ▶                                      Today     │
+ │  ──────────────────────────────────────────────────────────────    │
+ │  Notes                                      AI Summary · Sync      │
+ │                                                                    │
+ │  14:32   Fixed race condition in WebSocket reconnect               │
+ │  15:10   [Linear ENG-412] Auth token refresh logic                 │
+ │                                                                    │
+ │  What did you work on?                                   [Add]     │
 ```
+
+Press **Shift–Command–Return** in the main window to start Work or stop the current timer. Note drafts stay with the day you wrote them for.
 
 <details>
 <summary><strong>Mini widget mode</strong> — a floating 304×176 widget for when you need screen space</summary>
