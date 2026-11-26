@@ -38,7 +38,8 @@ struct ContentView: View {
 
     @AppStorage("linearResyncLookbackDays") private var linearResyncLookbackDays = 30
 
-    @State private var noteText = ""
+    @FocusState private var noteFocused: Bool
+    @State private var noteDrafts: [String: String] = [:]
     @State private var exportPeriod = "week"
     @State private var hoveredButton: String?
     @State private var selectedTab: Tab = .notes
@@ -63,311 +64,188 @@ struct ContentView: View {
         .sheet(isPresented: $vm.isEditingHours) { editHoursSheet }
     }
 
-    // MARK: - Top Section (Hero Card)
+    // MARK: - Today
 
     private var topSection: some View {
-        SectionCard {
-            VStack(spacing: DesignSystem.Layout.spacingMD) {
-                heroMetaHeader
+        let totals = vm.todayTotals
+        let work = totals[.work] ?? 0
+        return SectionCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Label("Today", systemImage: "timer")
+                        .font(DesignSystem.Typography.heading)
+                        .foregroundStyle(Theme.text)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(Date.now.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))
+                        .font(DesignSystem.Typography.caption)
+                        .foregroundStyle(Theme.dim)
+                    Spacer()
+                    Button {
+                        vm.isMiniMode = true
+                    } label: {
+                        Image(systemName: "rectangle.compress.vertical")
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.dim)
+                    .help("Open Mini Mode")
+                    .accessibilityLabel("Open Mini Mode")
+                    guideButton
+                }
 
-                heroTimeCluster
-                    .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vm.activeEntry?.id)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 24) {
+                        timerReadout(work: work)
+                        Spacer(minLength: 0)
+                        todayGoal(work: work, totals: totals)
+                    }
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        timerReadout(work: work)
+                        todayGoal(work: work, totals: totals)
+                    }
+                }
 
                 controlButtons
 
-                heroSummaryStrip
-
                 if vm.isViewingToday, let reminder = vm.noteReminderMessage {
-                    HStack(spacing: DesignSystem.Layout.spacingSM) {
+                    HStack(spacing: 8) {
                         Image(systemName: "pencil.and.scribble")
-                            .font(DesignSystem.Typography.captionBold)
-                            .foregroundStyle(DesignSystem.Colors.warning)
+                            .accessibilityHidden(true)
                         Text(reminder)
-                            .font(DesignSystem.Typography.caption)
-                            .foregroundStyle(Theme.text.opacity(0.85))
-                        Spacer()
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         Button("Add note") {
                             selectedTab = .notes
+                            noteFocused = true
                         }
-                        .buttonStyle(.plain)
-                        .font(DesignSystem.Typography.captionBold)
-                        .foregroundStyle(DesignSystem.Colors.warning)
+                        .buttonStyle(.borderless)
+                        .fontWeight(.semibold)
                     }
-                    .padding(.horizontal, DesignSystem.Layout.spacingSM)
-                    .padding(.vertical, DesignSystem.Layout.spacingSM)
-                    .background(
-                        RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusMD, style: .continuous)
-                            .fill(DesignSystem.Colors.warning.opacity(0.08))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusMD, style: .continuous)
-                            .stroke(DesignSystem.Colors.warning.opacity(0.2), lineWidth: 1)
-                    )
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .font(DesignSystem.Typography.caption)
+                    .foregroundStyle(Theme.text)
+                    .padding(8)
+                    .background(DesignSystem.Colors.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
+    }
+
+    private func timerReadout(work: TimeInterval) -> some View {
+        let active = vm.activeEntry
+        let value = active == nil ? formatDur(work) : vm.elapsedFormatted
+        return VStack(alignment: .leading, spacing: 2) {
+            Label(active.map { "\($0.type.label) in progress" } ?? "Work logged today",
+                  systemImage: active?.type.icon ?? ActivityType.work.icon)
+                .font(DesignSystem.Typography.captionBold)
+                .foregroundStyle(Theme.text)
+
+            Text(value)
+                .font(.system(size: 37, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+                .accessibilityLabel(active == nil ? "Work logged today" : "Elapsed time")
+                .accessibilityValue(value)
+
+            Text(active.map { "Started at \($0.startTime.formatted(date: .omitted, time: .shortened))" } ?? "No timer running")
+                .font(DesignSystem.Typography.caption)
+                .foregroundStyle(Theme.dim)
+        }
+    }
+
+    private func todayGoal(work: TimeInterval, totals: [ActivityType: TimeInterval]) -> some View {
+        let goal = max(vm.dailyGoalHours, 0.1) * 3600
+        let tint = work >= goal ? DesignSystem.Colors.success : Theme.accent
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Label(work >= goal ? "Goal reached" : "Daily goal", systemImage: work >= goal ? "checkmark.circle.fill" : "target")
+                    .font(DesignSystem.Typography.captionBold)
+                    .foregroundStyle(Theme.text)
+                Spacer()
+                Text("Target \(formatDur(goal))")
+                    .font(DesignSystem.Typography.monoCaption)
+                    .foregroundStyle(Theme.dim)
+            }
+            ProgressView(value: min(max(work, 0), goal), total: goal)
+                .tint(tint)
+                .accessibilityLabel("Daily work goal")
+                .accessibilityValue("\(formatDur(work)) of \(formatDur(goal))")
+            HStack(spacing: 12) {
+                Label("Lunch \(formatDur(totals[.lunch] ?? 0))", systemImage: ActivityType.lunch.icon)
+                Label("Break \(formatDur(totals[.break] ?? 0))", systemImage: ActivityType.break.icon)
+            }
+            .font(DesignSystem.Typography.caption)
+            .foregroundStyle(Theme.dim)
+        }
+        .frame(minWidth: 206, idealWidth: 228, maxWidth: 260)
     }
 
     private var contentSection: some View {
         SectionCard {
             VStack(spacing: 0) {
                 contentHeader
-                    .padding(.bottom, DesignSystem.Layout.spacingMD)
-
+                    .padding(.bottom, 10)
                 Divider().overlay(Theme.border)
-
+                if selectedTab == .notes || selectedTab == .log {
+                    contentContextBar
+                    Divider().overlay(Theme.border)
+                }
                 tabContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
 
-    private var heroMetaHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top) {
-                heroMetaText
-                Spacer(minLength: DesignSystem.Layout.spacingMD)
-                heroGoalBadge
-                guideButton
-            }
-
-            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingSM) {
-                HStack {
-                    heroMetaText
-                    Spacer()
-                    guideButton
-                }
-                heroGoalBadge
-            }
-        }
-    }
-
     private var guideButton: some View {
         Button {
-            withAnimation(.easeOut(duration: 0.3)) {
-                guideStep = 0
-                showGuide = true
-            }
+            guideStep = 0
+            showGuide = true
         } label: {
             Image(systemName: "questionmark.circle")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Theme.dim)
+                .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
         .help("Show guide")
-    }
-
-    private var heroMetaText: some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
-            Text("TODAY FOCUS")
-                .font(DesignSystem.Typography.microBold)
-                .tracking(1.2)
-                .foregroundStyle(Theme.dim)
-            Text(vm.isViewingToday ? "Live tracking dashboard" : "Reviewing \(vm.selectedDate.formatted(date: .abbreviated, time: .omitted))")
-                .font(DesignSystem.Typography.caption)
-                .foregroundStyle(Theme.text.opacity(0.82))
-        }
-    }
-
-    private var heroGoalBadge: some View {
-        HStack(spacing: DesignSystem.Layout.spacingXS) {
-            Image(systemName: contextWorkHours >= vm.dailyGoalHours ? "flag.checkered.circle.fill" : "scope")
-                .font(DesignSystem.Typography.captionBold)
-            Text("\(contextWorkHours, specifier: "%.1f") / \(vm.dailyGoalHours, specifier: "%.1f")h")
-                .font(DesignSystem.Typography.monoCaption)
-                .lineLimit(1)
-                .minimumScaleFactor(0.9)
-        }
-        .foregroundStyle(contextWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent)
-        .padding(.horizontal, DesignSystem.Layout.spacingSM)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill((contextWorkHours >= vm.dailyGoalHours ? DesignSystem.Colors.success : Theme.accent).opacity(0.10))
-        )
-    }
-
-    private var heroTimeCluster: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .firstTextBaseline, spacing: DesignSystem.Layout.spacingMD) {
-                heroTimeBlock
-                Spacer(minLength: DesignSystem.Layout.spacingMD)
-                heroStatusPanel
-            }
-
-            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
-                heroTimeBlock
-                heroStatusPanel
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    private var heroTimeBlock: some View {
-        VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingXS) {
-            // Tick every second while tracking, every 30s when idle (just for clock display)
-            TimelineView(.periodic(from: .now, by: vm.activeEntry != nil ? 1 : 30)) { context in
-                Text(Self.timeFormatter.string(from: context.date))
-                    .font(DesignSystem.Typography.monoHero)
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                    .foregroundStyle(vm.activeEntry?.type.accentColor ?? Theme.text)
-                    .contentTransition(.numericText(countsDown: false))
-                    .animation(.easeInOut(duration: 0.15), value: context.date)
-            }
-
-            Text(vm.activeEntry == nil ? "Ready to track your next block" : "Current clock time")
-                .font(DesignSystem.Typography.caption)
-                .foregroundStyle(Theme.dim)
-        }
+        .accessibilityLabel("Show guide")
     }
 
     private var contentHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: DesignSystem.Layout.spacingMD) {
-                tabBarScroll
-                Spacer(minLength: DesignSystem.Layout.spacingMD)
-                contentContextBar
-            }
-
-            VStack(alignment: .leading, spacing: DesignSystem.Layout.spacingMD) {
-                tabBarScroll
-                contentContextBar
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-    }
-
-    private var tabBarScroll: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        HStack {
             tabBar
-                .padding(.vertical, 1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 0)
         }
     }
-
-    @ViewBuilder
-    private var heroStatusPanel: some View {
-        VStack(alignment: .trailing, spacing: DesignSystem.Layout.spacingSM) {
-            if let active = vm.activeEntry {
-                HStack(spacing: DesignSystem.Layout.spacingXS) {
-                    Circle()
-                        .fill(active.type.accentColor)
-                        .frame(width: 7, height: 7)
-                        .modifier(PulseModifier())
-                    Text(active.type.label.uppercased())
-                        .font(DesignSystem.Typography.microBold)
-                        .tracking(1)
-                }
-                .foregroundStyle(active.type.accentColor)
-
-                Text(vm.elapsedFormatted)
-                    .font(DesignSystem.Typography.monoTitle)
-                    .monospacedDigit()
-                    .foregroundStyle(active.type.accentColor)
-                    .contentTransition(.numericText(countsDown: false))
-
-                Text("since \(active.startTime.formatted(date: .omitted, time: .shortened))")
-                    .font(DesignSystem.Typography.micro)
-                    .foregroundStyle(Theme.dim)
-            } else {
-                HStack(spacing: DesignSystem.Layout.spacingXS) {
-                    Image(systemName: "moon.zzz.fill")
-                        .font(DesignSystem.Typography.caption)
-                    Text("IDLE")
-                        .font(DesignSystem.Typography.captionBold)
-                        .tracking(1.5)
-                }
-                .foregroundStyle(Theme.dim)
-
-                Text("No timer running")
-                    .font(DesignSystem.Typography.caption)
-                    .foregroundStyle(Theme.dim)
-            }
-
-            VStack(alignment: .trailing, spacing: 6) {
-                Capsule()
-                    .fill(Theme.accent.opacity(0.15))
-                    .frame(width: 140, height: 6)
-                    .overlay(alignment: .leading) {
-                        Capsule()
-                            .fill(Theme.accent)
-                            .frame(width: max(18, 140 * goalProgress))
-                    }
-                Text("daily goal")
-                    .font(DesignSystem.Typography.micro)
-                    .foregroundStyle(Theme.dim)
-            }
-        }
-        .padding(.horizontal, DesignSystem.Layout.spacingMD)
-        .padding(.vertical, DesignSystem.Layout.spacingSM)
-        .background(
-            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
-                .fill(Theme.surface2.opacity(0.7))
-        )
-        .frame(minWidth: 168)
-    }
-
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        return f
-    }()
-
-
 
     // MARK: - Controls
 
     private var controlButtons: some View {
-        VStack(spacing: DesignSystem.Layout.spacingSM) {
-            if let active = vm.activeEntry {
-                PrimaryActionButton(
-                    title: "Stop \(active.type.label)",
-                    icon: "stop.fill",
-                    color: Theme.stop,
-                    action: { vm.stopActivity() }
-                )
-                .keyboardShortcut(.space, modifiers: [])
+        let active = vm.activeEntry
+        return HStack(spacing: 8) {
+            PrimaryActionButton(
+                title: active.map { "Stop \($0.type.label)" } ?? "Start Work",
+                icon: active == nil ? "play.fill" : "stop.fill",
+                color: active == nil ? Color(nsColor: .systemIndigo) : Theme.stop
+            ) {
+                if active == nil { vm.startActivity(.work) } else { vm.stopActivity() }
+            }
+            .keyboardShortcut(.return, modifiers: [.command, .shift])
+            .help("Start or stop the timer (⇧⌘↩)")
 
-                HStack(spacing: DesignSystem.Layout.spacingSM) {
-                    ForEach(ActivityType.allCases) { type in
-                        if type != active.type {
-                            compactButton(
-                                key: "sw-\(type.rawValue)",
-                                icon: type.icon,
-                                label: "Switch to \(type.label)",
-                                fg: type.accentColor,
-                                bg: type.accentColor.opacity(0.08),
-                                hoverBg: type.accentColor.opacity(0.16)
-                            ) { vm.startActivity(type) }
-                        }
-                    }
-                }
-            } else {
-                PrimaryActionButton(
-                    title: "Start Work",
-                    icon: ActivityType.work.icon,
-                    color: ActivityType.work.accentColor,
-                    action: { vm.startActivity(.work) }
-                )
-
-                HStack(spacing: DesignSystem.Layout.spacingSM) {
-                    ForEach([ActivityType.lunch, ActivityType.break], id: \.self) { type in
-                        compactButton(
-                            key: type.rawValue,
-                            icon: type.icon,
-                            label: "Start \(type.label)",
-                            fg: type.accentColor,
-                            bg: type.accentColor.opacity(0.08),
-                            hoverBg: type.accentColor.opacity(0.16)
-                        ) { vm.startActivity(type) }
-                    }
+            ForEach(ActivityType.allCases) { type in
+                if (active?.type ?? .work) != type {
+                    compactButton(
+                        key: type.rawValue,
+                        icon: type.icon,
+                        label: type.label,
+                        fg: Theme.text,
+                        bg: Theme.surface2,
+                        hoverBg: type.accentColor.opacity(0.18)
+                    ) { vm.startActivity(type) }
+                    .help(active == nil ? "Start \(type.label)" : "Switch to \(type.label)")
                 }
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: vm.activeEntry?.id)
     }
 
     private func compactButton(key: String, icon: String, label: String, fg: Color, bg: Color, hoverBg: Color, action: @escaping () -> Void) -> some View {
@@ -410,39 +288,42 @@ struct ContentView: View {
                         }
                     }
                 )
+                .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
             }
         }
     }
 
-    @ViewBuilder
     private var contentContextBar: some View {
-        if selectedTab == .notes || selectedTab == .log {
-            HStack(spacing: DesignSystem.Layout.spacingSM) {
-                dayNavButton(icon: "chevron.left") { shiftSelectedDay(by: -1) }
+        HStack(spacing: 8) {
+            dayNavButton(icon: "chevron.left", label: "Previous day") { shiftSelectedDay(by: -1) }
 
-                DatePicker(
-                    "",
-                    selection: Binding(
-                        get: { vm.selectedDate },
-                        set: { vm.setSelectedDate($0) }
-                    ),
-                    displayedComponents: .date
-                )
-                .labelsHidden()
-                .datePickerStyle(.field)
-                .frame(width: 126)
+            DatePicker(
+                "Selected date",
+                selection: Binding(get: { vm.selectedDate }, set: { vm.setSelectedDate($0) }),
+                in: ...Date.now,
+                displayedComponents: .date
+            )
+            .labelsHidden()
+            .datePickerStyle(.field)
+            .fixedSize()
 
-                dayNavButton(icon: "chevron.right", disabled: vm.isViewingToday) {
-                    shiftSelectedDay(by: 1)
-                }
+            dayNavButton(icon: "chevron.right", label: "Next day", disabled: vm.isViewingToday) {
+                shiftSelectedDay(by: 1)
+            }
+            Spacer(minLength: 0)
 
-                if !vm.isViewingToday {
-                    SecondaryChip(title: "Today", icon: "arrow.uturn.backward.circle", isActive: false, activeColor: Theme.accent) {
-                        vm.jumpToToday()
-                    }
-                }
+            if vm.isViewingToday {
+                Text("Today")
+                    .font(DesignSystem.Typography.captionBold)
+                    .foregroundStyle(Theme.dim)
+            } else {
+                Button("Back to Today") { vm.jumpToToday() }
+                    .buttonStyle(.borderless)
+                    .font(DesignSystem.Typography.captionBold)
+                    .foregroundStyle(Theme.accent)
             }
         }
+        .padding(.vertical, 6)
     }
 
     // MARK: - Tab Content
@@ -518,25 +399,17 @@ struct ContentView: View {
                     .font(.system(size: 16))
                     .foregroundStyle(noteText.isEmpty ? Theme.dim : Theme.accent)
 
-                TextField(notePlaceholder, text: $noteText)
+                TextField(notePlaceholder, text: noteBinding(for: vm.selectedDateString))
+                    .focused($noteFocused)
                     .textFieldStyle(.plain)
                     .font(DesignSystem.Typography.body)
                     .foregroundStyle(Theme.text)
                     .onSubmit { submitNote() }
 
-                if !noteText.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Button(action: { submitNote() }) {
-                        Text("Add")
-                            .font(DesignSystem.Typography.microBold)
-                            .foregroundStyle(Theme.bg)
-                            .padding(.horizontal, DesignSystem.Layout.spacingMD)
-                            .padding(.vertical, DesignSystem.Layout.spacingXS)
-                            .background(Theme.accent)
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .transition(.scale.combined(with: .opacity))
-                }
+                Button("Add") { submitNote() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             .padding(.horizontal, DesignSystem.Layout.spacingLG)
             .padding(.vertical, DesignSystem.Layout.spacingMD)
@@ -591,7 +464,9 @@ struct ContentView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            .opacity(0.5)
+            .opacity(0.65)
+            .accessibilityLabel("Delete note")
+            .help("Delete note")
         }
         .padding(.horizontal, DesignSystem.Layout.spacingLG)
         .padding(.vertical, DesignSystem.Layout.spacingSM)
@@ -1169,7 +1044,7 @@ struct ContentView: View {
         }
     }
 
-    private func dayNavButton(icon: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+    private func dayNavButton(icon: String, label: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(DesignSystem.Typography.captionBold)
@@ -1182,66 +1057,8 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .disabled(disabled)
-    }
-
-    private var heroSummaryStrip: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: DesignSystem.Layout.spacingSM) {
-                heroSummaryItem(title: "Work", value: formatDur(contextTotals[.work] ?? 0), color: ActivityType.work.accentColor)
-                heroSummaryItem(title: "Lunch", value: formatDur(contextTotals[.lunch] ?? 0), color: ActivityType.lunch.accentColor)
-                heroSummaryItem(title: "Break", value: formatDur(contextTotals[.break] ?? 0), color: ActivityType.break.accentColor)
-                heroContextItem
-            }
-
-            VStack(spacing: DesignSystem.Layout.spacingSM) {
-                HStack(spacing: DesignSystem.Layout.spacingSM) {
-                    heroSummaryItem(title: "Work", value: formatDur(contextTotals[.work] ?? 0), color: ActivityType.work.accentColor)
-                    heroSummaryItem(title: "Lunch", value: formatDur(contextTotals[.lunch] ?? 0), color: ActivityType.lunch.accentColor)
-                }
-                HStack(spacing: DesignSystem.Layout.spacingSM) {
-                    heroSummaryItem(title: "Break", value: formatDur(contextTotals[.break] ?? 0), color: ActivityType.break.accentColor)
-                    heroContextItem
-                }
-            }
-        }
-    }
-
-    private var heroContextItem: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("\(contextNotesCount) note\(contextNotesCount == 1 ? "" : "s")")
-                .font(DesignSystem.Typography.captionBold)
-                .foregroundStyle(Theme.text)
-
-            Text(vm.isViewingToday ? "Live context" : vm.selectedDate.formatted(date: .abbreviated, time: .omitted))
-                .font(DesignSystem.Typography.micro)
-                .foregroundStyle(Theme.dim)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, DesignSystem.Layout.spacingMD)
-        .padding(.vertical, DesignSystem.Layout.spacingSM)
-        .background(
-            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
-                .fill(Theme.surface2.opacity(0.55))
-        )
-    }
-
-    private func heroSummaryItem(title: String, value: String, color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title.uppercased())
-                .font(DesignSystem.Typography.microBold)
-                .tracking(0.8)
-                .foregroundStyle(Theme.dim)
-
-            Text(value)
-                .font(DesignSystem.Typography.monoCaption)
-                .foregroundStyle(color)
-        }
-        .padding(.horizontal, DesignSystem.Layout.spacingMD)
-        .padding(.vertical, DesignSystem.Layout.spacingSM)
-        .background(
-            RoundedRectangle(cornerRadius: DesignSystem.Layout.radiusLG, style: .continuous)
-                .fill(color.opacity(0.06))
-        )
+        .accessibilityLabel(label)
+        .help(label)
     }
 
     private var notesHeader: some View {
@@ -1293,9 +1110,6 @@ struct ContentView: View {
                 Task { await vm.linearSync() }
             }
 
-            toolbarIconButton(icon: "rectangle.compress.vertical", color: Theme.dim) {
-                withAnimation { vm.isMiniMode = true }
-            }
         }
     }
 
@@ -1325,19 +1139,6 @@ struct ContentView: View {
         .opacity(disabled ? 0.45 : 1)
     }
 
-    private func toolbarIconButton(icon: String, color: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(DesignSystem.Typography.captionBold)
-                .foregroundStyle(color)
-                .padding(.horizontal, DesignSystem.Layout.spacingSM)
-                .padding(.vertical, DesignSystem.Layout.spacingXS)
-                .background(color.opacity(0.10))
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
     private func quickNoteChip(_ title: String) -> some View {
         SecondaryChip(title: title, icon: "plus", isActive: false, activeColor: Theme.accent) {
             if noteText.isEmpty {
@@ -1348,20 +1149,16 @@ struct ContentView: View {
         }
     }
 
-    private var goalProgress: Double {
-        min(1, max(0, contextWorkHours / max(vm.dailyGoalHours, 0.1)))
+    private func noteBinding(for day: String) -> Binding<String> {
+        Binding(
+            get: { noteDrafts[day, default: ""] },
+            set: { noteDrafts[day] = $0.isEmpty ? nil : $0 }
+        )
     }
 
-    private var contextTotals: [ActivityType: TimeInterval] {
-        vm.isViewingToday ? vm.todayTotals : vm.selectedDayTotals
-    }
-
-    private var contextWorkHours: Double {
-        (contextTotals[.work] ?? 0) / 3600.0
-    }
-
-    private var contextNotesCount: Int {
-        vm.selectedNotes.count
+    private var noteText: String {
+        get { noteDrafts[vm.selectedDateString, default: ""] }
+        nonmutating set { noteDrafts[vm.selectedDateString] = newValue.isEmpty ? nil : newValue }
     }
 
     private func formatDur(_ sec: TimeInterval) -> String {
@@ -1381,13 +1178,14 @@ struct ContentView: View {
 // MARK: - Pulse Modifier
 
 struct PulseModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(isPulsing ? 1.3 : 1.0)
-            .opacity(isPulsing ? 0.6 : 1.0)
-            .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: isPulsing)
+            .scaleEffect(isPulsing && !reduceMotion ? 1.3 : 1.0)
+            .opacity(isPulsing && !reduceMotion ? 0.6 : 1.0)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: isPulsing)
             .onAppear { isPulsing = true }
     }
 }
