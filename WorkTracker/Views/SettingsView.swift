@@ -24,6 +24,7 @@ struct SettingsView: View {
     @State private var isResyncing = false
     @State private var showResetConfirm = false
     @State private var showImportConfirm = false
+    @State private var showImportError = false
     @State private var pendingImportData: Data?
     @State private var saveFlashLinear = false
     @State private var saveFlashAI = false
@@ -291,12 +292,19 @@ struct SettingsView: View {
                 if let data = pendingImportData {
                     if DatabaseManager.shared.importAll(from: data) {
                         vm.refresh()
+                    } else {
+                        showImportError = true
                     }
                 }
                 pendingImportData = nil
             }
         } message: {
             Text("This will replace all existing data with the imported file. Current data will be lost.")
+        }
+        .alert("Couldn’t Import Backup", isPresented: $showImportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The backup couldn’t be restored. Your existing data was not changed.")
         }
     }
 

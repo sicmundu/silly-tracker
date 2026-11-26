@@ -92,7 +92,7 @@ struct DayNote: Identifiable {
 
 // MARK: - Day Stats
 
-struct DayStats: Identifiable {
+struct DayStats: Identifiable, Sendable {
     var id: String { date }
     let date: String
     var work: TimeInterval = 0

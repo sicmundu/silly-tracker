@@ -738,24 +738,30 @@ struct ContentView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            statsInsights
-                .padding(.horizontal, DesignSystem.Layout.spacingLG)
-                .padding(.bottom, DesignSystem.Layout.spacingMD)
+            if !vm.isLoadingStats && !vm.statsLoadFailed {
+                statsInsights
+                    .padding(.horizontal, DesignSystem.Layout.spacingLG)
+                    .padding(.bottom, DesignSystem.Layout.spacingMD)
+            }
 
             Divider().overlay(Theme.border)
 
-            if vm.weekStats.isEmpty {
+            if vm.isLoadingStats {
+                Spacer()
+                ProgressView("Loading statistics…")
+                Spacer()
+            } else if vm.weekStats.isEmpty {
                 Spacer()
                 EmptyStateView(
-                    title: "No data",
-                    message: "No data available for this period.",
+                    title: vm.statsLoadFailed ? "Statistics unavailable" : "No data",
+                    message: vm.statsLoadFailed ? "Try selecting the period again." : "No data available for this period.",
                     icon: "chart.bar"
                 )
                 .padding(.horizontal, DesignSystem.Layout.spacingXL)
                 Spacer()
             } else {
                 ScrollView(.vertical, showsIndicators: false) {
-                    let maxSec = vm.weekStats.map(\.total).max() ?? 1
+                    let maxSec = vm.periodBarMax
 
                     LazyVStack(spacing: 1) {
                         ForEach(vm.weekStats) { day in
