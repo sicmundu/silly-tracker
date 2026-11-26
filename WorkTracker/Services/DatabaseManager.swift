@@ -116,6 +116,10 @@ final class DatabaseManager {
     }
 
     private func prepareStatement(_ sql: String) -> OpaquePointer? {
+        Self.prepareStatement(sql, on: db)
+    }
+
+    private static func prepareStatement(_ sql: String, on db: OpaquePointer?) -> OpaquePointer? {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             let msg = db.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? "unknown"
@@ -125,7 +129,8 @@ final class DatabaseManager {
         return stmt
     }
 
-    private func bind(_ value: String, to stmt: OpaquePointer?, at index: Int32) {
+    @discardableResult
+    private func bind(_ value: String, to stmt: OpaquePointer?, at index: Int32) -> Int32 {
         sqlite3_bind_text(stmt, index, (value as NSString).utf8String, -1, transient)
     }
 
@@ -156,7 +161,12 @@ final class DatabaseManager {
     }()
 
     static func parseDate(_ s: String) -> Date? {
-        isoFormatterWithFraction.date(from: s)
+        // The app writes 19-character local timestamps, including in its backups.
+        // Skip the two failing ISO-with-timezone parses for that common format.
+        if s.utf8.count == 19, let local = simpleFmt.date(from: s) {
+            return local
+        }
+        return isoFormatterWithFraction.date(from: s)
             ?? isoFormatter.date(from: s)
             ?? simpleFmt.date(from: s)
     }
@@ -186,6 +196,16 @@ final class DatabaseManager {
     }
 
     private func loadEntryRecordsLocked(from start: Date, to end: Date) -> [EntryRecord] {
+        var results: [EntryRecord] = []
+        Self.forEachEntry(from: start, to: end, on: db) { results.append($0) }
+        return results
+    }
+
+    @discardableResult
+    private static func forEachEntry(
+        from start: Date, to end: Date, on db: OpaquePointer?,
+        cancelled: () -> Bool = { false }, visit: (EntryRecord) -> Void
+    ) -> Bool {
         // Local timestamps and ISO 8601 timestamps with offsets share the same
         // date prefix. Widen the SQL window to account for different time zones;
         // the callers still do exact overlap checks using parsed Dates.
@@ -196,13 +216,16 @@ final class DatabaseManager {
             WHERE (end_time IS NULL OR end_time >= ?) AND start_time < ?
             ORDER BY start_time
             """
-        guard let stmt = prepareStatement(sql) else { return [] }
+        guard let stmt = prepareStatement(sql, on: db) else { return false }
         defer { sqlite3_finalize(stmt) }
-        bind(lower, to: stmt, at: 1)
-        bind(upper, to: stmt, at: 2)
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(stmt, 1, lower, -1, transient)
+        sqlite3_bind_text(stmt, 2, upper, -1, transient)
 
-        var results: [EntryRecord] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        var result = sqlite3_step(stmt)
+        while result == SQLITE_ROW {
+            guard !cancelled() else { return false }
+            defer { result = sqlite3_step(stmt) }
             let id = sqlite3_column_int64(stmt, 0)
             let storedDate = String(cString: sqlite3_column_text(stmt, 1))
             let type = ActivityType(rawValue: String(cString: sqlite3_column_text(stmt, 2))) ?? .work
@@ -215,15 +238,15 @@ final class DatabaseManager {
             }
 
             if let endStr, let end = Self.parseDate(endStr) {
-                results.append(EntryRecord(id: id, storedDate: storedDate, type: type, startTime: start, endTime: end))
+                visit(EntryRecord(id: id, storedDate: storedDate, type: type, startTime: start, endTime: end))
             } else if let endStr {
                 print("Skipping entry \(id): invalid end_time \(endStr)")
             } else {
-                results.append(EntryRecord(id: id, storedDate: storedDate, type: type, startTime: start, endTime: nil))
+                visit(EntryRecord(id: id, storedDate: storedDate, type: type, startTime: start, endTime: nil))
             }
         }
 
-        return results
+        return result == SQLITE_DONE && !cancelled()
     }
 
     private func entriesLocked(for date: String) -> [TrackerEntry] {
@@ -451,45 +474,68 @@ final class DatabaseManager {
 
     func getStats(from startDate: String, to endDate: String) -> [DayStats] {
         queue.sync {
-            guard let startBounds = Self.dayBounds(for: startDate),
-                  let endBounds = Self.dayBounds(for: toDateFloor(to: endDate)) else {
-                return []
-            }
-
-            let rangeStart = startBounds.start
-            let rangeEnd = endBounds.end
-            let calendar = Calendar.current
-            let now = Date()
-            var days: [String: DayStats] = [:]
-
-            for record in loadEntryRecordsLocked(from: rangeStart, to: rangeEnd) {
-                let effectiveEnd = record.endTime ?? now
-                guard effectiveEnd > rangeStart, record.startTime < rangeEnd else { continue }
-
-                var cursor = calendar.startOfDay(for: max(record.startTime, rangeStart))
-                while cursor < effectiveEnd && cursor < rangeEnd {
-                    guard let nextDay = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
-
-                    let sliceStart = max(record.startTime, cursor, rangeStart)
-                    let sliceEnd = min(effectiveEnd, nextDay, rangeEnd)
-                    if sliceEnd > sliceStart {
-                        let key = Self.dayString(from: cursor)
-                        var day = days[key] ?? DayStats(date: key)
-                        let seconds = sliceEnd.timeIntervalSince(sliceStart)
-                        switch record.type {
-                        case .work: day.work += seconds
-                        case .lunch: day.lunch += seconds
-                        case .break: day.breakTime += seconds
-                        }
-                        days[key] = day
-                    }
-
-                    cursor = nextDay
-                }
-            }
-
-            return days.values.sorted { $0.date > $1.date }
+            Self.calculateStats(from: startDate, to: endDate, on: db) ?? []
         }
+    }
+
+    /// Independent WAL reader: rendering a long period never holds the writer queue.
+    static func readStats(
+        path: String, from startDate: String, to endDate: String,
+        cancelled: () -> Bool = { false }
+    ) -> [DayStats]? {
+        guard !cancelled() else { return nil }
+        var reader: OpaquePointer?
+        let result = sqlite3_open_v2(path, &reader, SQLITE_OPEN_READONLY, nil)
+        defer { sqlite3_close(reader) }
+        guard result == SQLITE_OK else { return nil }
+        sqlite3_busy_timeout(reader, 300)
+        return calculateStats(from: startDate, to: endDate, on: reader, cancelled: cancelled)
+    }
+
+    private static func calculateStats(
+        from startDate: String, to endDate: String, on db: OpaquePointer?,
+        cancelled: () -> Bool = { false }
+    ) -> [DayStats]? {
+        guard let startBounds = Self.dayBounds(for: startDate),
+              let endBounds = Self.dayBounds(for: endDate) else {
+            return []
+        }
+
+        let rangeStart = startBounds.start
+        let rangeEnd = endBounds.end
+        let calendar = Calendar.current
+        let now = Date()
+        var days: [String: DayStats] = [:]
+
+        let complete = forEachEntry(from: rangeStart, to: rangeEnd, on: db, cancelled: cancelled) { record in
+            let effectiveEnd = record.endTime ?? now
+            guard effectiveEnd > rangeStart, record.startTime < rangeEnd else { return }
+
+            var cursor = calendar.startOfDay(for: max(record.startTime, rangeStart))
+            while cursor < effectiveEnd && cursor < rangeEnd {
+                guard !cancelled() else { return }
+                guard let nextDay = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
+
+                let sliceStart = max(record.startTime, cursor, rangeStart)
+                let sliceEnd = min(effectiveEnd, nextDay, rangeEnd)
+                if sliceEnd > sliceStart {
+                    let key = Self.dayString(from: cursor)
+                    var day = days[key] ?? DayStats(date: key)
+                    let seconds = sliceEnd.timeIntervalSince(sliceStart)
+                    switch record.type {
+                    case .work: day.work += seconds
+                    case .lunch: day.lunch += seconds
+                    case .break: day.breakTime += seconds
+                    }
+                    days[key] = day
+                }
+
+                cursor = nextDay
+            }
+        }
+
+        guard complete else { return nil }
+        return days.values.sorted { $0.date > $1.date }
     }
 
     // MARK: - Adjust Work Hours
@@ -928,10 +974,6 @@ final class DatabaseManager {
         }
     }
 
-    private func toDateFloor(to value: String) -> String {
-        value
-    }
-
     // MARK: - Full Export / Import / Reset
 
     struct FullExport: Codable {
@@ -943,153 +985,108 @@ final class DatabaseManager {
 
     func exportAll() -> Data? {
         queue.sync {
-            var export = FullExport(entries: [], notes: [], summaries: [], linearSynced: [])
-
-            // entries
-            if let stmt = prepareStatement("SELECT id, date, type, start_time, end_time FROM entries ORDER BY start_time") {
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    var row: [String: String] = [:]
-                    row["id"] = "\(sqlite3_column_int64(stmt, 0))"
-                    row["date"] = String(cString: sqlite3_column_text(stmt, 1))
-                    row["type"] = String(cString: sqlite3_column_text(stmt, 2))
-                    row["start_time"] = String(cString: sqlite3_column_text(stmt, 3))
-                    if let end = sqlite3_column_text(stmt, 4) { row["end_time"] = String(cString: end) }
-                    export.entries.append(row)
-                }
-                sqlite3_finalize(stmt)
-            }
-
-            // notes
-            if let stmt = prepareStatement("SELECT id, date, content, created_at FROM day_notes ORDER BY created_at") {
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    var row: [String: String] = [:]
-                    row["id"] = "\(sqlite3_column_int64(stmt, 0))"
-                    row["date"] = String(cString: sqlite3_column_text(stmt, 1))
-                    row["content"] = String(cString: sqlite3_column_text(stmt, 2))
-                    row["created_at"] = String(cString: sqlite3_column_text(stmt, 3))
-                    export.notes.append(row)
-                }
-                sqlite3_finalize(stmt)
-            }
-
-            // summaries
-            if let stmt = prepareStatement("SELECT date, summary, generated_at FROM day_summaries ORDER BY date") {
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    var row: [String: String] = [:]
-                    row["date"] = String(cString: sqlite3_column_text(stmt, 0))
-                    row["summary"] = String(cString: sqlite3_column_text(stmt, 1))
-                    row["generated_at"] = String(cString: sqlite3_column_text(stmt, 2))
-                    export.summaries.append(row)
-                }
-                sqlite3_finalize(stmt)
-            }
-
-            // linear synced
-            if let stmt = prepareStatement("SELECT issue_id, identifier, title, completed_at, synced_at, note_id FROM linear_synced_issues ORDER BY synced_at") {
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    var row: [String: String] = [:]
-                    row["issue_id"] = String(cString: sqlite3_column_text(stmt, 0))
-                    row["identifier"] = String(cString: sqlite3_column_text(stmt, 1))
-                    row["title"] = String(cString: sqlite3_column_text(stmt, 2))
-                    row["completed_at"] = String(cString: sqlite3_column_text(stmt, 3))
-                    row["synced_at"] = String(cString: sqlite3_column_text(stmt, 4))
-                    if sqlite3_column_type(stmt, 5) != SQLITE_NULL {
-                        row["note_id"] = "\(sqlite3_column_int64(stmt, 5))"
-                    }
-                    export.linearSynced.append(row)
-                }
-                sqlite3_finalize(stmt)
-            }
-
-            return try? JSONEncoder().encode(export)
+            // Keep all four tables on the same read snapshot, including changes
+            // from other processes using the shared database.
+            guard exec("BEGIN DEFERRED") else { return nil }
+            defer { exec("ROLLBACK") }
+            guard
+                let entries = exportRowsLocked("SELECT id, date, type, start_time, end_time FROM entries ORDER BY start_time"),
+                let notes = exportRowsLocked("SELECT id, date, content, created_at FROM day_notes ORDER BY created_at"),
+                let summaries = exportRowsLocked("SELECT date, summary, generated_at FROM day_summaries ORDER BY date"),
+                let synced = exportRowsLocked("SELECT issue_id, identifier, title, completed_at, synced_at, note_id FROM linear_synced_issues ORDER BY synced_at")
+            else { return nil }
+            return try? JSONEncoder().encode(FullExport(
+                entries: entries, notes: notes, summaries: summaries, linearSynced: synced
+            ))
         }
     }
 
+    private func exportRowsLocked(_ sql: String) -> [[String: String]]? {
+        guard let stmt = prepareStatement(sql) else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        let columns = (0..<sqlite3_column_count(stmt)).map { String(cString: sqlite3_column_name(stmt, $0)) }
+        var rows: [[String: String]] = []
+        var result = sqlite3_step(stmt)
+        while result == SQLITE_ROW {
+            var row: [String: String] = [:]
+            for (index, column) in columns.enumerated() {
+                if let value = sqlite3_column_text(stmt, Int32(index)) {
+                    row[column] = String(cString: value)
+                }
+            }
+            rows.append(row)
+            result = sqlite3_step(stmt)
+        }
+        return result == SQLITE_DONE ? rows : nil
+    }
+
     func importAll(from data: Data) -> Bool {
-        queue.sync {
-            guard let export = try? JSONDecoder().decode(FullExport.self, from: data) else { return false }
+        // Decode before touching the existing database.
+        guard let backup = try? JSONDecoder().decode(FullExport.self, from: data) else { return false }
 
-            // Clear existing data
-            exec("DELETE FROM linear_synced_issues")
-            exec("DELETE FROM day_summaries")
-            exec("DELETE FROM day_notes")
-            exec("DELETE FROM entries")
+        return queue.sync {
+            guard exec("BEGIN IMMEDIATE") else { return false }
+            var committed = false
+            defer { if !committed { exec("ROLLBACK") } }
 
-            // Import entries
-            for row in export.entries {
-                guard let date = row["date"], let type = row["type"], let start = row["start_time"] else { continue }
-                if let endTime = row["end_time"] {
-                    let sql = "INSERT INTO entries (date, type, start_time, end_time) VALUES (?, ?, ?, ?)"
-                    if let stmt = prepareStatement(sql) {
-                        bind(date, to: stmt, at: 1)
-                        bind(type, to: stmt, at: 2)
-                        bind(start, to: stmt, at: 3)
-                        bind(endTime, to: stmt, at: 4)
-                        sqlite3_step(stmt)
-                        sqlite3_finalize(stmt)
-                    }
-                } else {
-                    let sql = "INSERT INTO entries (date, type, start_time) VALUES (?, ?, ?)"
-                    if let stmt = prepareStatement(sql) {
-                        bind(date, to: stmt, at: 1)
-                        bind(type, to: stmt, at: 2)
-                        bind(start, to: stmt, at: 3)
-                        sqlite3_step(stmt)
-                        sqlite3_finalize(stmt)
-                    }
-                }
-            }
+            guard exec("DELETE FROM linear_synced_issues"),
+                  exec("DELETE FROM day_summaries"),
+                  exec("DELETE FROM day_notes"),
+                  exec("DELETE FROM entries") else { return false }
 
-            // Import notes
-            for row in export.notes {
-                guard let date = row["date"], let content = row["content"], let createdAt = row["created_at"] else { continue }
-                let sql = "INSERT INTO day_notes (date, content, created_at) VALUES (?, ?, ?)"
-                if let stmt = prepareStatement(sql) {
-                    bind(date, to: stmt, at: 1)
-                    bind(content, to: stmt, at: 2)
-                    bind(createdAt, to: stmt, at: 3)
-                    sqlite3_step(stmt)
-                    sqlite3_finalize(stmt)
-                }
-            }
+            // Keep explicit IDs so Linear sync markers still point to their
+            // original notes. Accept older files that omit optional IDs.
+            guard insertBackupRowsLocked(backup.entries,
+                sql: "INSERT INTO entries (id, date, type, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+                required: [2: "date", 3: "type", 4: "start_time"],
+                optionalText: [5: "end_time"], optionalIDs: [1: "id"]),
+                insertBackupRowsLocked(backup.notes,
+                    sql: "INSERT INTO day_notes (id, date, content, created_at) VALUES (?, ?, ?, ?)",
+                    required: [2: "date", 3: "content", 4: "created_at"], optionalIDs: [1: "id"]),
+                insertBackupRowsLocked(backup.summaries,
+                    sql: "INSERT INTO day_summaries (date, summary, generated_at) VALUES (?, ?, ?)",
+                    required: [1: "date", 2: "summary", 3: "generated_at"]),
+                insertBackupRowsLocked(backup.linearSynced,
+                    sql: "INSERT INTO linear_synced_issues (issue_id, identifier, title, completed_at, synced_at, note_id) VALUES (?, ?, ?, ?, ?, ?)",
+                    required: [1: "issue_id", 2: "identifier", 3: "title", 4: "completed_at", 5: "synced_at"],
+                    optionalIDs: [6: "note_id"]),
+                exec("""
+                    UPDATE linear_synced_issues SET note_id = NULL
+                    WHERE note_id IS NOT NULL AND NOT EXISTS (
+                        SELECT 1 FROM day_notes WHERE day_notes.id = linear_synced_issues.note_id
+                    )
+                    """),
+                exec("COMMIT")
+            else { return false }
 
-            // Import summaries
-            for row in export.summaries {
-                guard let date = row["date"], let summary = row["summary"], let gen = row["generated_at"] else { continue }
-                let sql = "INSERT OR REPLACE INTO day_summaries (date, summary, generated_at) VALUES (?, ?, ?)"
-                if let stmt = prepareStatement(sql) {
-                    bind(date, to: stmt, at: 1)
-                    bind(summary, to: stmt, at: 2)
-                    bind(gen, to: stmt, at: 3)
-                    sqlite3_step(stmt)
-                    sqlite3_finalize(stmt)
-                }
-            }
-
-            // Import linear synced
-            for row in export.linearSynced {
-                guard let issueId = row["issue_id"], let identifier = row["identifier"],
-                      let title = row["title"], let completedAt = row["completed_at"],
-                      let syncedAt = row["synced_at"] else { continue }
-                let sql = "INSERT OR REPLACE INTO linear_synced_issues (issue_id, identifier, title, completed_at, synced_at, note_id) VALUES (?, ?, ?, ?, ?, ?)"
-                if let stmt = prepareStatement(sql) {
-                    bind(issueId, to: stmt, at: 1)
-                    bind(identifier, to: stmt, at: 2)
-                    bind(title, to: stmt, at: 3)
-                    bind(completedAt, to: stmt, at: 4)
-                    bind(syncedAt, to: stmt, at: 5)
-                    if let noteIdStr = row["note_id"], let noteId = Int64(noteIdStr) {
-                        sqlite3_bind_int64(stmt, 6, noteId)
-                    } else {
-                        sqlite3_bind_null(stmt, 6)
-                    }
-                    sqlite3_step(stmt)
-                    sqlite3_finalize(stmt)
-                }
-            }
-
+            committed = true
             return true
         }
+    }
+
+    private func insertBackupRowsLocked(
+        _ rows: [[String: String]], sql: String, required: [Int32: String],
+        optionalText: [Int32: String] = [:], optionalIDs: [Int32: String] = [:]
+    ) -> Bool {
+        guard let stmt = prepareStatement(sql) else { return false }
+        defer { sqlite3_finalize(stmt) }
+        for row in rows {
+            guard sqlite3_reset(stmt) == SQLITE_OK, sqlite3_clear_bindings(stmt) == SQLITE_OK else { return false }
+            for (index, field) in required {
+                guard let value = row[field], bind(value, to: stmt, at: index) == SQLITE_OK else { return false }
+            }
+            for (index, field) in optionalText {
+                if let value = row[field], bind(value, to: stmt, at: index) != SQLITE_OK { return false }
+            }
+            for (index, field) in optionalIDs {
+                if let raw = row[field] {
+                    guard let id = Int64(raw), id > 0,
+                          sqlite3_bind_int64(stmt, index, id) == SQLITE_OK else { return false }
+                }
+            }
+            guard sqlite3_step(stmt) == SQLITE_DONE else { return false }
+        }
+        return true
     }
 
     func resetAll() {

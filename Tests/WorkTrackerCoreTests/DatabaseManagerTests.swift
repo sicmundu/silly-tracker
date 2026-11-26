@@ -145,6 +145,56 @@ final class DatabaseManagerTests: XCTestCase {
         XCTAssertEqual(db.workEditRestriction(for: "2026-03-05"), "Stop the active timer first")
     }
 
+    func testReadOnlyStatsMatchesWriterAndCanCancelMidRead() throws {
+        try insertEntry(
+            date: "2026-03-05", type: "work",
+            startTime: "2026-03-05T23:30:00", endTime: "2026-03-06T01:15:00"
+        )
+        let start = "2026-03-05"
+        let end = "2026-03-06"
+        let read = try XCTUnwrap(DatabaseManager.readStats(path: dbURL.path, from: start, to: end))
+        XCTAssertEqual(read.map(\.work), db.getStats(from: start, to: end).map(\.work))
+        var checks = 0
+        XCTAssertNil(DatabaseManager.readStats(path: dbURL.path, from: start, to: end) {
+            checks += 1
+            return checks >= 3
+        })
+        XCTAssertGreaterThanOrEqual(checks, 3)
+    }
+
+    func testBackupRoundTripKeepsLinearNoteLink() throws {
+        let day = "2026-03-06"
+        let firstID = db.addNoteReturningId(date: day, content: "Deleted note leaves a gap")
+        db.deleteNote(id: firstID)
+        let noteID = db.addNoteReturningId(date: day, content: "[Linear ENG-8] Keep note link")
+        let issue = LinearIssue(id: "issue-8", identifier: "ENG-8", title: "Keep note link", completedAt: "2026-03-06T10:00:00Z")
+        db.markIssueSynced(issue, noteId: noteID)
+        let backup = try XCTUnwrap(db.exportAll())
+        XCTAssertTrue(db.importAll(from: backup))
+        let restored = try XCTUnwrap(db.getNotes(for: day).first)
+        XCTAssertEqual(restored.id, noteID)
+        XCTAssertTrue(db.isIssueSynced(issue.id))
+        db.deleteNote(id: restored.id)
+        XCTAssertFalse(db.isIssueSynced(issue.id))
+    }
+
+    func testFailedBackupImportRollsBackExistingData() throws {
+        let day = "2026-03-06"
+        db.addNote(date: day, content: "Keep this if import fails")
+        let badNote = ["id": "42", "date": day, "content": "Duplicate ID", "created_at": day + "T14:00:00"]
+        let backup = DatabaseManager.FullExport(entries: [], notes: [badNote, badNote], summaries: [], linearSynced: [])
+        XCTAssertFalse(db.importAll(from: try JSONEncoder().encode(backup)))
+        XCTAssertEqual(db.getNotes(for: day).map(\.content), ["Keep this if import fails"])
+    }
+
+    func testLegacyBackupWithoutIDsCanStillImport() throws {
+        let day = "2026-03-06"
+        let note = ["date": day, "content": "Legacy note", "created_at": day + "T14:00:00"]
+        let backup = DatabaseManager.FullExport(entries: [], notes: [note], summaries: [], linearSynced: [])
+        XCTAssertTrue(db.importAll(from: try JSONEncoder().encode(backup)))
+        XCTAssertEqual(db.getNotes(for: day).map(\.content), ["Legacy note"])
+    }
+
     private func insertEntry(date: String, type: String, startTime: String, endTime: String?) throws {
         var handle: OpaquePointer?
         XCTAssertEqual(sqlite3_open(dbURL.path, &handle), SQLITE_OK)

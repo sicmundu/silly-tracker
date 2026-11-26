@@ -17,7 +17,9 @@ final class TrackerViewModel: ObservableObject {
     @Published var selectedNotes: [DayNote] = []
     @Published var selectedSummary: DaySummary?
 
-    @Published var weekStats: [DayStats] = []
+    @Published private var stats = StatsSnapshot()
+    @Published private(set) var isLoadingStats = false
+    @Published private(set) var statsLoadFailed = false
     @Published var syncStatus: LinearSyncStatus = .init()
     @Published var isSyncing = false
     @Published var toastMessage: String?
@@ -52,6 +54,15 @@ final class TrackerViewModel: ObservableObject {
     private var activeWorkStart: Date?
     private var activeWorkFirstDay: String?
     private var displayDay = ""
+    private var statsTask: Task<Void, Never>?
+
+    private struct StatsSnapshot: Sendable {
+        var days: [DayStats] = []
+        var totalWork: TimeInterval = 0
+        var bestDay: DayStats?
+        var barMax: TimeInterval = 1
+        var streak = 0
+    }
 
     // MARK: - Init
 
@@ -63,6 +74,7 @@ final class TrackerViewModel: ObservableObject {
     deinit {
         timer?.invalidate()
         syncTimer?.invalidate()
+        statsTask?.cancel()
     }
 
     // MARK: - Timers
@@ -372,35 +384,60 @@ final class TrackerViewModel: ObservableObject {
         return f
     }()
 
-    func refreshStats() {
+    private func refreshStats() {
         let range = statsRange
-        let raw = db.getStats(
-            from: Self.ymdFormatter.string(from: range.start),
-            to: Self.ymdFormatter.string(from: range.end)
-        )
-        weekStats = fillEmptyDays(raw, range: range)
+        let from = Self.ymdFormatter.string(from: range.start)
+        let to = Self.ymdFormatter.string(from: range.end)
+        let path = db.dbPath
+        statsTask?.cancel()
+        isLoadingStats = true
+        statsLoadFailed = false
+        statsTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let raw = DatabaseManager.readStats(path: path, from: from, to: to) {
+                Task.isCancelled
+            }
+            let snapshot = raw.map { Self.buildStatsSnapshot($0, start: range.start, end: range.end) }
+            guard !Task.isCancelled else { return }
+            await self?.applyStats(snapshot)
+        }
     }
 
-    /// Pads the stats list with zero-hour entries for every past day (and today) in the
-    /// range so days where the tracker was never running still show up as clickable rows.
-    /// Future days are excluded.
-    private func fillEmptyDays(_ stats: [DayStats], range: (start: Date, end: Date)) -> [DayStats] {
+    private func applyStats(_ snapshot: StatsSnapshot?) {
+        // A period change can cancel this task while its result waits for the main actor.
+        guard !Task.isCancelled else { return }
+        stats = snapshot ?? StatsSnapshot()
+        statsLoadFailed = snapshot == nil
+        isLoadingStats = false
+    }
+
+    /// Build rows and chart aggregates once per data refresh, not on every timer tick.
+    private nonisolated static func buildStatsSnapshot(
+        _ raw: [DayStats], start startDate: Date, end endDate: Date
+    ) -> StatsSnapshot {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
-        let start = cal.startOfDay(for: range.start)
-        let end = min(cal.startOfDay(for: range.end), today)
-        guard start <= end else { return stats.sorted { $0.date > $1.date } }
-
-        let existing = Dictionary(uniqueKeysWithValues: stats.map { ($0.date, $0) })
-        var result: [DayStats] = []
-        var cursor = end
-        while cursor >= start {
-            let key = Self.ymdFormatter.string(from: cursor)
-            result.append(existing[key] ?? DayStats(date: key))
+        let start = cal.startOfDay(for: startDate)
+        let requestedEnd = cal.startOfDay(for: endDate)
+        let existing = Dictionary(uniqueKeysWithValues: raw.map { ($0.date, $0) })
+        var snapshot = StatsSnapshot()
+        var cursor = min(requestedEnd, today)
+        var streakContinues = requestedEnd <= today
+        while cursor >= start && !Task.isCancelled {
+            let key = DatabaseManager.dayString(from: cursor)
+            let day = existing[key] ?? DayStats(date: key)
+            snapshot.days.append(day)
+            snapshot.totalWork += day.work
+            snapshot.barMax = max(snapshot.barMax, day.total)
+            if snapshot.bestDay.map({ day.work > $0.work }) ?? true { snapshot.bestDay = day }
+            if streakContinues && day.work > 0 {
+                snapshot.streak += 1
+            } else {
+                streakContinues = false
+            }
             guard let previous = cal.date(byAdding: .day, value: -1, to: cursor) else { break }
-            cursor = previous
+            cursor = cal.startOfDay(for: previous)
         }
-        return result
+        return snapshot
     }
 
     func setStatsPeriod(_ period: StatsPeriod) {
@@ -459,13 +496,11 @@ final class TrackerViewModel: ObservableObject {
         (selectedDayTotals[.work] ?? 0) / 3600.0
     }
 
-    var periodTotalWork: TimeInterval {
-        weekStats.reduce(0) { $0 + $1.work }
-    }
-
-    var periodTotalAll: TimeInterval {
-        weekStats.reduce(0) { $0 + $1.total }
-    }
+    var weekStats: [DayStats] { stats.days }
+    var periodTotalWork: TimeInterval { stats.totalWork }
+    var periodBestDay: DayStats? { stats.bestDay }
+    var periodCurrentStreak: Int { stats.streak }
+    var periodBarMax: TimeInterval { stats.barMax }
 
     var periodAveragePerDay: TimeInterval {
         periodTotalWork / Double(max(statsRangeDayCount, 1))
@@ -473,29 +508,6 @@ final class TrackerViewModel: ObservableObject {
 
     var periodGoalDelta: TimeInterval {
         periodTotalWork - (Double(statsRangeDayCount) * dailyGoalHours * 3600)
-    }
-
-    var periodBestDay: DayStats? {
-        weekStats.max { $0.work < $1.work }
-    }
-
-    var periodCurrentStreak: Int {
-        let calendar = Calendar.current
-        let map = Dictionary(uniqueKeysWithValues: weekStats.map { ($0.date, $0.work) })
-        let range = statsRange
-        let start = calendar.startOfDay(for: range.start)
-        var cursor = calendar.startOfDay(for: range.end)
-        var streak = 0
-
-        while cursor >= start {
-            let key = Self.ymdFormatter.string(from: cursor)
-            guard (map[key] ?? 0) > 0 else { break }
-            streak += 1
-            guard let previous = calendar.date(byAdding: .day, value: -1, to: cursor) else { break }
-            cursor = previous
-        }
-
-        return streak
     }
 
     var noteReminderMessage: String? {
