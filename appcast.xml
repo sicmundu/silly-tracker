@@ -170,5 +170,19 @@
     />
 </item>
 
+        <item>
+    <title>Version 1.8.0</title>
+    <pubDate>Thu, 26 Nov 2026 06:37:00 +0000</pubDate>
+    <sparkle:version>12</sparkle:version>
+    <sparkle:shortVersionString>1.8.0</sparkle:shortVersionString>
+    <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+    <enclosure
+        url="https://github.com/sicmundu/silly-tracker/releases/download/v1.8.0/SillyTrack-1.8.0.zip"
+        length="3302359"
+        type="application/octet-stream"
+        sparkle:edSignature="yMJX8YHp9qKZ2jrmCio+2bTQFIi+0QNHZGCwHI6L5YfNYuQYD0loYAhgOGq2OFsh3fvvA6RV1epLoDa2Ro1XBg=="
+    />
+</item>
+
     </channel>
 </rss>
